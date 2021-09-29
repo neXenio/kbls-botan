@@ -4,7 +4,6 @@
 #define BOTAN_KYBER_KEY_H_
 
 #include <botan/pk_keys.h>
-#include <botan/polyn_gf2m.h>
 #include <botan/exceptn.h>
 #include <botan/der_enc.h>
 
