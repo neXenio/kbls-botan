@@ -15,47 +15,47 @@ namespace
     public:
 
 
-		typedef struct {
-			// TODO Use m_N
-			int16_t coeffs[256]; // coeffs[m_N]
-		} poly;
+        typedef struct {
+            // TODO Use m_N
+            int16_t coeffs[256]; // coeffs[m_N]
+        } poly;
 
-		typedef struct {
-			// TODO Use m_k
-			poly vec[4]; // vec[m_k]
-		} polyvec;
+        typedef struct {
+            // TODO Use m_k
+            poly vec[4]; // vec[m_k]
+        } polyvec;
 
 
-		/*************************************************
-		* Name:        csubq
-		*
-		* Description: Conditionallly subtract q
-		*
-		* Arguments:   - int16_t x: input integer
-		*
-		* Returns:     a - q if a >= q, else a
-		**************************************************/
-		int16_t csubq(int16_t a) {
-			a -= m_Q;
-			a += (a >> 15) & m_Q;
-			return a;
-		}
+        /*************************************************
+        * Name:        csubq
+        *
+        * Description: Conditionallly subtract q
+        *
+        * Arguments:   - int16_t x: input integer
+        *
+        * Returns:     a - q if a >= q, else a
+        **************************************************/
+        int16_t csubq(int16_t a) {
+            a -= m_Q;
+            a += (a >> 15) & m_Q;
+            return a;
+        }
 
-		/*************************************************
-		* Name:        poly_csubq
-		*
-		* Description: Applies conditional subtraction of q to each coefficient
-		*              of a polynomial. For details of conditional subtraction
-		*              of q see comments in reduce.c
-		*
-		* Arguments:   - poly *r: pointer to input/output polynomial
-		**************************************************/
-		void poly_csubq(poly *r)
-		{
-			unsigned int i;
-			for (i = 0;i<m_N;i++)
-				r->coeffs[i] = csubq(r->coeffs[i]);
-		}
+        /*************************************************
+        * Name:        poly_csubq
+        *
+        * Description: Applies conditional subtraction of q to each coefficient
+        *              of a polynomial. For details of conditional subtraction
+        *              of q see comments in reduce.c
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void poly_csubq(poly *r)
+        {
+            unsigned int i;
+            for (i = 0;i<m_N;i++)
+                r->coeffs[i] = csubq(r->coeffs[i]);
+        }
 
         /*************************************************
         * Name:        poly_tobytes
@@ -197,22 +197,22 @@ namespace
         }
 
 
-		/*************************************************
-		* Name:        polyvec_csubq
-		*
-		* Description: Applies conditional subtraction of q to each coefficient
-		*              of each element of a vector of polynomials
-		*              for details of conditional subtraction of q see comments in
-		*              reduce.c
-		*
-		* Arguments:   - poly *r: pointer to input/output polynomial
-		**************************************************/
-		void polyvec_csubq(polyvec *r)
-		{
-			unsigned int i;
-			for (i = 0;i<m_k;i++)
-				poly_csubq(&r->vec[i]);
-		}
+        /*************************************************
+        * Name:        polyvec_csubq
+        *
+        * Description: Applies conditional subtraction of q to each coefficient
+        *              of each element of a vector of polynomials
+        *              for details of conditional subtraction of q see comments in
+        *              reduce.c
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void polyvec_csubq(polyvec *r)
+        {
+            unsigned int i;
+            for (i = 0;i<m_k;i++)
+                poly_csubq(&r->vec[i]);
+        }
 
 
         /*************************************************
@@ -233,7 +233,7 @@ namespace
             if ( m_k == 4 )
             {
                 uint16_t t[8];
-				size_t offset = 0;
+                size_t offset = 0;
                 for ( i = 0; i < m_k; i++ ) {
                     for ( j = 0; j < m_N / 8; j++ ) {
                         for ( k = 0; k < 8; k++ )
@@ -258,7 +258,7 @@ namespace
             else if ( m_k == 2 || m_k == 3 )
             {
                 uint16_t t[4];
-				size_t offset = 0;
+                size_t offset = 0;
                 for ( i = 0; i < m_k; i++ ) {
                     for ( j = 0; j < m_N / 4; j++ ) {
                         for ( k = 0; k < 4; k++ )
@@ -439,341 +439,341 @@ namespace
         }
 
 
-		/*************************************************
-		* Name:        poly_add
-		*
-		* Description: Add two polynomials
-		*
-		* Arguments: - poly *r:       pointer to output polynomial
-		*            - const poly *a: pointer to first input polynomial
-		*            - const poly *b: pointer to second input polynomial
-		**************************************************/
-		void poly_add(poly *r, const poly *a, const poly *b)
-		{
-			unsigned int i;
-			for (i = 0;i<m_N;i++)
-				r->coeffs[i] = a->coeffs[i] + b->coeffs[i];
-		}
+        /*************************************************
+        * Name:        poly_add
+        *
+        * Description: Add two polynomials
+        *
+        * Arguments: - poly *r:       pointer to output polynomial
+        *            - const poly *a: pointer to first input polynomial
+        *            - const poly *b: pointer to second input polynomial
+        **************************************************/
+        void poly_add(poly *r, const poly *a, const poly *b)
+        {
+            unsigned int i;
+            for (i = 0;i<m_N;i++)
+                r->coeffs[i] = a->coeffs[i] + b->coeffs[i];
+        }
 
-		/*************************************************
-		* Name:        polyvec_add
-		*
-		* Description: Add vectors of polynomials
-		*
-		* Arguments: - polyvec *r:       pointer to output vector of polynomials
-		*            - const polyvec *a: pointer to first input vector of polynomials
-		*            - const polyvec *b: pointer to second input vector of polynomials
-		**************************************************/
-		void polyvec_add(polyvec *r, const polyvec *a, const polyvec *b)
-		{
-			unsigned int i;
-			for (i = 0;i<m_k;i++)
-				poly_add(&r->vec[i], &a->vec[i], &b->vec[i]);
-		}
-
-
-		/*************************************************
-		* Name:        poly_tomont
-		*
-		* Description: Inplace conversion of all coefficients of a polynomial
-		*              from normal domain to Montgomery domain
-		*
-		* Arguments:   - poly *r: pointer to input/output polynomial
-		**************************************************/
-		void poly_tomont(poly *r)
-		{
-			unsigned int i;
-			const int16_t f = (1ULL << 32) % m_Q;
-			for (i = 0;i<m_N;i++)
-				r->coeffs[i] = montgomery_reduce((int32_t)r->coeffs[i] * f);
-		}
+        /*************************************************
+        * Name:        polyvec_add
+        *
+        * Description: Add vectors of polynomials
+        *
+        * Arguments: - polyvec *r:       pointer to output vector of polynomials
+        *            - const polyvec *a: pointer to first input vector of polynomials
+        *            - const polyvec *b: pointer to second input vector of polynomials
+        **************************************************/
+        void polyvec_add(polyvec *r, const polyvec *a, const polyvec *b)
+        {
+            unsigned int i;
+            for (i = 0;i<m_k;i++)
+                poly_add(&r->vec[i], &a->vec[i], &b->vec[i]);
+        }
 
 
-		/*************************************************
-		* Name:        polyvec_reduce
-		*
-		* Description: Applies Barrett reduction to each coefficient
-		*              of each element of a vector of polynomials
-		*              for details of the Barrett reduction see comments in reduce.c
-		*
-		* Arguments:   - poly *r: pointer to input/output polynomial
-		**************************************************/
-		void polyvec_reduce(polyvec *r)
-		{
-			unsigned int i;
-			for (i = 0;i<m_k;i++)
-				poly_reduce(&r->vec[i]);
-		}
+        /*************************************************
+        * Name:        poly_tomont
+        *
+        * Description: Inplace conversion of all coefficients of a polynomial
+        *              from normal domain to Montgomery domain
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void poly_tomont(poly *r)
+        {
+            unsigned int i;
+            const int16_t f = (1ULL << 32) % m_Q;
+            for (i = 0;i<m_N;i++)
+                r->coeffs[i] = montgomery_reduce((int32_t)r->coeffs[i] * f);
+        }
 
 
-		/*************************************************
-		* Name:        polyvec_invntt_tomont
-		*
-		* Description: Apply inverse NTT to all elements of a vector of polynomials
-		*              and multiply by Montgomery factor 2^16
-		*
-		* Arguments:   - polyvec *r: pointer to in/output vector of polynomials
-		**************************************************/
-		void polyvec_invntt_tomont(polyvec *r)
-		{
-			unsigned int i;
-			for (i = 0;i<m_k;i++)
-				poly_invntt_tomont(&r->vec[i]);
-		}
+        /*************************************************
+        * Name:        polyvec_reduce
+        *
+        * Description: Applies Barrett reduction to each coefficient
+        *              of each element of a vector of polynomials
+        *              for details of the Barrett reduction see comments in reduce.c
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void polyvec_reduce(polyvec *r)
+        {
+            unsigned int i;
+            for (i = 0;i<m_k;i++)
+                poly_reduce(&r->vec[i]);
+        }
 
 
-		/*************************************************
-		* Name:        prf
-		*
-		* Description: Usage of SHAKE256 as a PRF, concatenates secret and public input
-		*              and then generates outlen bytes of SHAKE256 output
-		*
-		* Arguments:   - const uint8_t *key: pointer to the key
-		*                                    (of length KYBER_SYMBYTES)
-		*              - uint8_t nonce:      single-byte nonce (public PRF input)
-		* Return:	   Output
-		**************************************************/
-		secure_vector<uint8_t> prf(
-			const uint8_t key[32],
-			uint8_t nonce)
-		{
-			if (!m_kyber_90s)
-			{
-				// TODO only normal kyber no 90s
-				unsigned int i;
-				uint8_t extkey[m_sym_bytes + 1];
-
-				for (i = 0;i<m_sym_bytes;i++)
-					extkey[i] = key[i];
-				extkey[i] = nonce;
-
-				secure_vector< uint64_t > spongeState;
-				spongeState.resize(25);
-				size_t spongeStatePos = 0;
-
-				spongeStatePos = Botan::SHA_3::absorb(m_SHAKE256_RATE, spongeState, spongeStatePos, extkey, sizeof(extkey));
-
-				// normal kyber not 90s
-				uint8_t tmp[504];
-				Botan::SHA_3::finish(m_SHAKE256_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-				Botan::SHA_3::expand(m_SHAKE256_RATE, spongeState, tmp, m_KYBER_ETA1*m_N/4 );
-
-				secure_vector<uint8_t> buf_std(tmp, tmp + (m_KYBER_ETA1*m_N / 4));
-				
-				return buf_std;
-
-				//shake256(out, outlen, extkey, sizeof(extkey));
-			}
-			else
-			{
-				// TODO 90s
-				throw Not_Implemented("Kyber 90s is still TODO");
-			}
-		}
+        /*************************************************
+        * Name:        polyvec_invntt_tomont
+        *
+        * Description: Apply inverse NTT to all elements of a vector of polynomials
+        *              and multiply by Montgomery factor 2^16
+        *
+        * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
+        **************************************************/
+        void polyvec_invntt_tomont(polyvec *r)
+        {
+            unsigned int i;
+            for (i = 0;i<m_k;i++)
+                poly_invntt_tomont(&r->vec[i]);
+        }
 
 
-		/*************************************************
-		* Name:        load32_littleendian
-		*
-		* Description: load 4 bytes into a 32-bit integer
-		*              in little-endian order
-		*
-		* Arguments:   - const uint8_t *x: pointer to input byte array
-		*
-		* Returns 32-bit unsigned integer loaded from x
-		**************************************************/
-		uint32_t load32_littleendian(const uint8_t x[4])
-		{
-			uint32_t r;
-			r = (uint32_t)x[0];
-			r |= (uint32_t)x[1] << 8;
-			r |= (uint32_t)x[2] << 16;
-			r |= (uint32_t)x[3] << 24;
-			return r;
-		}
+        /*************************************************
+        * Name:        prf
+        *
+        * Description: Usage of SHAKE256 as a PRF, concatenates secret and public input
+        *              and then generates outlen bytes of SHAKE256 output
+        *
+        * Arguments:   - const uint8_t *key: pointer to the key
+        *                                    (of length KYBER_SYMBYTES)
+        *              - uint8_t nonce:      single-byte nonce (public PRF input)
+        * Return:       Output
+        **************************************************/
+        secure_vector<uint8_t> prf(
+            const uint8_t key[32],
+            uint8_t nonce)
+        {
+            if (!m_kyber_90s)
+            {
+                // TODO only normal kyber no 90s
+                unsigned int i;
+                uint8_t extkey[m_sym_bytes + 1];
 
-		/*************************************************
-		* Name:        load24_littleendian
-		*
-		* Description: load 3 bytes into a 32-bit integer
-		*              in little-endian order
-		*              This function is only needed for Kyber-512
-		*
-		* Arguments:   - const uint8_t *x: pointer to input byte array
-		*
-		* Returns 32-bit unsigned integer loaded from x (most significant byte is zero)
-		**************************************************/
+                for (i = 0;i<m_sym_bytes;i++)
+                    extkey[i] = key[i];
+                extkey[i] = nonce;
 
-		uint32_t load24_littleendian(const uint8_t x[3])
-		{
-			uint32_t r;
-			r = (uint32_t)x[0];
-			r |= (uint32_t)x[1] << 8;
-			r |= (uint32_t)x[2] << 16;
-			return r;
-		}
+                secure_vector< uint64_t > spongeState;
+                spongeState.resize(25);
+                size_t spongeStatePos = 0;
 
+                spongeStatePos = Botan::SHA_3::absorb(m_SHAKE256_RATE, spongeState, spongeStatePos, extkey, sizeof(extkey));
 
-		/*************************************************
-		* Name:        cbd2
-		*
-		* Description: Given an array of uniformly random bytes, compute
-		*              polynomial with coefficients distributed according to
-		*              a centered binomial distribution with parameter eta=2
-		*
-		* Arguments:   - poly *r:							pointer to output polynomial
-		*              - const secure_vector<uint8_t>& buf: pointer to input byte array
-		**************************************************/
-		void cbd2(poly *r, const secure_vector<uint8_t>& buf)
-		{
-			if (buf.size() < (2 * m_N / 4))
-			{
-				throw std::runtime_error("Cannot cbd2 because buf incompatible buffer length!");
-			}
+                // normal kyber not 90s
+                uint8_t tmp[504];
+                Botan::SHA_3::finish(m_SHAKE256_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
+                Botan::SHA_3::expand(m_SHAKE256_RATE, spongeState, tmp, m_KYBER_ETA1*m_N/4 );
 
-			for (unsigned int i = 0;i<m_N / 8;i++) {
-				uint32_t t = load32_littleendian(buf.data() + 4 * i);
-				uint32_t d = t & 0x55555555;
-				d += (t >> 1) & 0x55555555;
+                secure_vector<uint8_t> buf_std(tmp, tmp + (m_KYBER_ETA1*m_N / 4));
 
-				for (unsigned int j = 0;j<8;j++) {
-					int16_t a = (d >> (4 * j + 0)) & 0x3;
-					int16_t b = (d >> (4 * j + 2)) & 0x3;
-					r->coeffs[8 * i + j] = a - b;
-				}
-			}
-		}
+                return buf_std;
 
-		/*************************************************
-		* Name:        cbd3
-		*
-		* Description: Given an array of uniformly random bytes, compute
-		*              polynomial with coefficients distributed according to
-		*              a centered binomial distribution with parameter eta=3
-		*              This function is only needed for Kyber-512
-		*
-		* Arguments:   - poly *r:            pointer to output polynomial
-		*              - const uint8_t *buf: pointer to input byte array
-		**************************************************/
-		void cbd3(poly *r, const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
-		{
-
-			if (buf.size() < (3 * m_N / 4))
-			{
-				throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
-			}
-			for (unsigned int i = 0;i<m_N / 4;i++) {
-				uint32_t t = load24_littleendian(buf.data() + 3 * i);
-				uint32_t d = t & 0x00249249;
-				d += (t >> 1) & 0x00249249;
-				d += (t >> 2) & 0x00249249;
-
-				for (unsigned int j = 0;j<4;j++) {
-					int16_t a = (d >> (6 * j + 0)) & 0x7;
-					int16_t b = (d >> (6 * j + 3)) & 0x7;
-					r->coeffs[4 * i + j] = a - b;
-				}
-			}
-		}
+                //shake256(out, outlen, extkey, sizeof(extkey));
+            }
+            else
+            {
+                // TODO 90s
+                throw Not_Implemented("Kyber 90s is still TODO");
+            }
+        }
 
 
-	void cbd_eta1(poly *r, const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
-	{
-		if (buf.size() < (m_KYBER_ETA1*m_N / 4))
-		{
-			throw std::runtime_error("Cannot cbd_eta1 because incompatible buffer length!");
-		}
-		if (m_KYBER_ETA1 == 2)
-		{
-			cbd2(r, buf);
-		}
-		else if (m_KYBER_ETA1 == 3)
-		{
-			cbd3(r, buf);
-		}
-		else
-		{
-			throw std::runtime_error("This implementation requires eta1 in {2,3}");
-		}
-	}
+        /*************************************************
+        * Name:        load32_littleendian
+        *
+        * Description: load 4 bytes into a 32-bit integer
+        *              in little-endian order
+        *
+        * Arguments:   - const uint8_t *x: pointer to input byte array
+        *
+        * Returns 32-bit unsigned integer loaded from x
+        **************************************************/
+        uint32_t load32_littleendian(const uint8_t x[4])
+        {
+            uint32_t r;
+            r = (uint32_t)x[0];
+            r |= (uint32_t)x[1] << 8;
+            r |= (uint32_t)x[2] << 16;
+            r |= (uint32_t)x[3] << 24;
+            return r;
+        }
 
-	void cbd_eta2(poly *r, const secure_vector<uint8_t>& buf )
-	{
-		if (buf.size() < (m_KYBER_ETA2*m_N / 4))
-		{
-			throw std::runtime_error("Cannot cbd_eta2 because incompatible buffer length!");
-		}
-		if (m_KYBER_ETA2 != 2)
-		{
-			std::runtime_error("This implementation requires eta2 = 2");
-		}
+        /*************************************************
+        * Name:        load24_littleendian
+        *
+        * Description: load 3 bytes into a 32-bit integer
+        *              in little-endian order
+        *              This function is only needed for Kyber-512
+        *
+        * Arguments:   - const uint8_t *x: pointer to input byte array
+        *
+        * Returns 32-bit unsigned integer loaded from x (most significant byte is zero)
+        **************************************************/
 
-		cbd2(r, buf);
-	}
+        uint32_t load24_littleendian(const uint8_t x[3])
+        {
+            uint32_t r;
+            r = (uint32_t)x[0];
+            r |= (uint32_t)x[1] << 8;
+            r |= (uint32_t)x[2] << 16;
+            return r;
+        }
 
-		/*************************************************
-		* Name:        poly_frommsg
-		*
-		* Description: Convert 32-byte message to polynomial
-		*
-		* Arguments:   - poly *r:            pointer to output polynomial
-		*              - const uint8_t *msg: pointer to input message
-		**************************************************/
-	void poly_frommsg(poly *r, const uint8_t msg[], size_t msgLength)
-	{
-		unsigned int i, j;
-		int16_t mask;
 
-		if (msgLength != m_N / 8)
-		{
-			throw std::runtime_error("KYBER_INDCPA_MSGBYTES must be equal to KYBER_N/8 bytes!");
-		}
+        /*************************************************
+        * Name:        cbd2
+        *
+        * Description: Given an array of uniformly random bytes, compute
+        *              polynomial with coefficients distributed according to
+        *              a centered binomial distribution with parameter eta=2
+        *
+        * Arguments:   - poly *r:                            pointer to output polynomial
+        *              - const secure_vector<uint8_t>& buf: pointer to input byte array
+        **************************************************/
+        void cbd2(poly *r, const secure_vector<uint8_t>& buf)
+        {
+            if (buf.size() < (2 * m_N / 4))
+            {
+                throw std::runtime_error("Cannot cbd2 because buf incompatible buffer length!");
+            }
 
-			for (i = 0;i<m_N / 8;i++) {
-				for (j = 0;j<8;j++) {
-					mask = -(int16_t)((msg[i] >> j) & 1);
-					r->coeffs[8 * i + j] = mask & ((m_Q + 1) / 2);
-				}
-			}
-		}
+            for (unsigned int i = 0;i<m_N / 8;i++) {
+                uint32_t t = load32_littleendian(buf.data() + 4 * i);
+                uint32_t d = t & 0x55555555;
+                d += (t >> 1) & 0x55555555;
 
-		/*************************************************
-		* Name:        poly_getnoise_eta2
-		*
-		* Description: Sample a polynomial deterministically from a seed and a nonce,
-		*              with output polynomial close to centered binomial distribution
-		*              with parameter KYBER_ETA2
-		*
-		* Arguments:   - poly *r:             pointer to output polynomial
-		*              - const uint8_t *seed: pointer to input seed
-		*                                     (of length KYBER_SYMBYTES bytes)
-		*              - uint8_t nonce:       one-byte input nonce
-		**************************************************/
-		void poly_getnoise_eta2(poly *r, const uint8_t seed[32], uint8_t nonce)
-		{
-			auto buf = prf( seed, nonce);
+                for (unsigned int j = 0;j<8;j++) {
+                    int16_t a = (d >> (4 * j + 0)) & 0x3;
+                    int16_t b = (d >> (4 * j + 2)) & 0x3;
+                    r->coeffs[8 * i + j] = a - b;
+                }
+            }
+        }
 
-			cbd_eta2(r, buf);
-		}
+        /*************************************************
+        * Name:        cbd3
+        *
+        * Description: Given an array of uniformly random bytes, compute
+        *              polynomial with coefficients distributed according to
+        *              a centered binomial distribution with parameter eta=3
+        *              This function is only needed for Kyber-512
+        *
+        * Arguments:   - poly *r:            pointer to output polynomial
+        *              - const uint8_t *buf: pointer to input byte array
+        **************************************************/
+        void cbd3(poly *r, const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
+        {
 
-		/*************************************************
-		* Name:        poly_getnoise_eta1
-		*
-		* Description: Sample a polynomial deterministically from a seed and a nonce,
-		*              with output polynomial close to centered binomial distribution
-		*              with parameter KYBER_ETA1
-		*
-		* Arguments:   - poly *r:             pointer to output polynomial
-		*              - const uint8_t *seed: pointer to input seed
-		*                                     (of length KYBER_SYMBYTES bytes)
-		*              - uint8_t nonce:       one-byte input nonce
-		**************************************************/
-		void poly_getnoise_eta1(poly *r, const uint8_t seed[32], uint8_t nonce)
-		{
-			auto buf = prf(seed, nonce);
+            if (buf.size() < (3 * m_N / 4))
+            {
+                throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
+            }
+            for (unsigned int i = 0;i<m_N / 4;i++) {
+                uint32_t t = load24_littleendian(buf.data() + 3 * i);
+                uint32_t d = t & 0x00249249;
+                d += (t >> 1) & 0x00249249;
+                d += (t >> 2) & 0x00249249;
 
-			cbd_eta1(r, buf);
-		}
+                for (unsigned int j = 0;j<4;j++) {
+                    int16_t a = (d >> (6 * j + 0)) & 0x7;
+                    int16_t b = (d >> (6 * j + 3)) & 0x7;
+                    r->coeffs[4 * i + j] = a - b;
+                }
+            }
+        }
+
+
+    void cbd_eta1(poly *r, const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
+    {
+        if (buf.size() < (m_KYBER_ETA1*m_N / 4))
+        {
+            throw std::runtime_error("Cannot cbd_eta1 because incompatible buffer length!");
+        }
+        if (m_KYBER_ETA1 == 2)
+        {
+            cbd2(r, buf);
+        }
+        else if (m_KYBER_ETA1 == 3)
+        {
+            cbd3(r, buf);
+        }
+        else
+        {
+            throw std::runtime_error("This implementation requires eta1 in {2,3}");
+        }
+    }
+
+    void cbd_eta2(poly *r, const secure_vector<uint8_t>& buf )
+    {
+        if (buf.size() < (m_KYBER_ETA2*m_N / 4))
+        {
+            throw std::runtime_error("Cannot cbd_eta2 because incompatible buffer length!");
+        }
+        if (m_KYBER_ETA2 != 2)
+        {
+            std::runtime_error("This implementation requires eta2 = 2");
+        }
+
+        cbd2(r, buf);
+    }
+
+        /*************************************************
+        * Name:        poly_frommsg
+        *
+        * Description: Convert 32-byte message to polynomial
+        *
+        * Arguments:   - poly *r:            pointer to output polynomial
+        *              - const uint8_t *msg: pointer to input message
+        **************************************************/
+    void poly_frommsg(poly *r, const uint8_t msg[], size_t msgLength)
+    {
+        unsigned int i, j;
+        int16_t mask;
+
+        if (msgLength != m_N / 8)
+        {
+            throw std::runtime_error("KYBER_INDCPA_MSGBYTES must be equal to KYBER_N/8 bytes!");
+        }
+
+            for (i = 0;i<m_N / 8;i++) {
+                for (j = 0;j<8;j++) {
+                    mask = -(int16_t)((msg[i] >> j) & 1);
+                    r->coeffs[8 * i + j] = mask & ((m_Q + 1) / 2);
+                }
+            }
+        }
+
+        /*************************************************
+        * Name:        poly_getnoise_eta2
+        *
+        * Description: Sample a polynomial deterministically from a seed and a nonce,
+        *              with output polynomial close to centered binomial distribution
+        *              with parameter KYBER_ETA2
+        *
+        * Arguments:   - poly *r:             pointer to output polynomial
+        *              - const uint8_t *seed: pointer to input seed
+        *                                     (of length KYBER_SYMBYTES bytes)
+        *              - uint8_t nonce:       one-byte input nonce
+        **************************************************/
+        void poly_getnoise_eta2(poly *r, const uint8_t seed[32], uint8_t nonce)
+        {
+            auto buf = prf( seed, nonce);
+
+            cbd_eta2(r, buf);
+        }
+
+        /*************************************************
+        * Name:        poly_getnoise_eta1
+        *
+        * Description: Sample a polynomial deterministically from a seed and a nonce,
+        *              with output polynomial close to centered binomial distribution
+        *              with parameter KYBER_ETA1
+        *
+        * Arguments:   - poly *r:             pointer to output polynomial
+        *              - const uint8_t *seed: pointer to input seed
+        *                                     (of length KYBER_SYMBYTES bytes)
+        *              - uint8_t nonce:       one-byte input nonce
+        **************************************************/
+        void poly_getnoise_eta1(poly *r, const uint8_t seed[32], uint8_t nonce)
+        {
+            auto buf = prf(seed, nonce);
+
+            cbd_eta1(r, buf);
+        }
 
         /*************************************************
         * Name:        indcpa_enc
@@ -837,68 +837,68 @@ namespace
             pack_ciphertext( c, &bp, &v );
         }
 
-		/*************************************************
-		* Name:        poly_ntt
-		*
-		* Description: Computes negacyclic number-theoretic transform (NTT) of
-		*              a polynomial in place;
-		*              inputs assumed to be in normal order, output in bitreversed order
-		*
-		* Arguments:   - uint16_t *r: pointer to in/output polynomial
-		**************************************************/
-		void poly_ntt(poly *r)
-		{
-			ntt(r->coeffs);
-			poly_reduce(r);
-		}
+        /*************************************************
+        * Name:        poly_ntt
+        *
+        * Description: Computes negacyclic number-theoretic transform (NTT) of
+        *              a polynomial in place;
+        *              inputs assumed to be in normal order, output in bitreversed order
+        *
+        * Arguments:   - uint16_t *r: pointer to in/output polynomial
+        **************************************************/
+        void poly_ntt(poly *r)
+        {
+            ntt(r->coeffs);
+            poly_reduce(r);
+        }
 
 
-		/*************************************************
-		* Name:        poly_decompress
-		*
-		* Description: De-serialization and subsequent decompression of a polynomial;
-		*              approximate inverse of poly_compress
-		*
-		* Arguments:   - poly *r:          pointer to output polynomial
-		*              - const uint8_t *a: pointer to input byte array
-		*                                  (of length KYBER_POLYCOMPRESSEDBYTES bytes)
-		**************************************************/
-		void poly_decompress(poly *r, const uint8_t a[], size_t aLength ) // TODO a[KYBER_POLYCOMPRESSEDBYTES]
-		{
-			unsigned int i;
+        /*************************************************
+        * Name:        poly_decompress
+        *
+        * Description: De-serialization and subsequent decompression of a polynomial;
+        *              approximate inverse of poly_compress
+        *
+        * Arguments:   - poly *r:          pointer to output polynomial
+        *              - const uint8_t *a: pointer to input byte array
+        *                                  (of length KYBER_POLYCOMPRESSEDBYTES bytes)
+        **************************************************/
+        void poly_decompress(poly *r, const uint8_t a[], size_t aLength ) // TODO a[KYBER_POLYCOMPRESSEDBYTES]
+        {
+            unsigned int i;
 
-			if (aLength == 128)
-			{
-				for (i = 0;i < m_N / 2;i++) {
-					r->coeffs[2 * i + 0] = (((uint16_t)(a[0] & 15)*m_Q) + 8) >> 4;
-					r->coeffs[2 * i + 1] = (((uint16_t)(a[0] >> 4)*m_Q) + 8) >> 4;
-					a += 1;
-				}
-			}
-			else if(aLength == 160)
-			{
-				unsigned int j;
-				uint8_t t[8];
-				for (i = 0;i < m_N / 8;i++) {
-					t[0] = (a[0] >> 0);
-					t[1] = (a[0] >> 5) | (a[1] << 3);
-					t[2] = (a[1] >> 2);
-					t[3] = (a[1] >> 7) | (a[2] << 1);
-					t[4] = (a[2] >> 4) | (a[3] << 4);
-					t[5] = (a[3] >> 1);
-					t[6] = (a[3] >> 6) | (a[4] << 2);
-					t[7] = (a[4] >> 3);
-					a += 5;
+            if (aLength == 128)
+            {
+                for (i = 0;i < m_N / 2;i++) {
+                    r->coeffs[2 * i + 0] = (((uint16_t)(a[0] & 15)*m_Q) + 8) >> 4;
+                    r->coeffs[2 * i + 1] = (((uint16_t)(a[0] >> 4)*m_Q) + 8) >> 4;
+                    a += 1;
+                }
+            }
+            else if(aLength == 160)
+            {
+                unsigned int j;
+                uint8_t t[8];
+                for (i = 0;i < m_N / 8;i++) {
+                    t[0] = (a[0] >> 0);
+                    t[1] = (a[0] >> 5) | (a[1] << 3);
+                    t[2] = (a[1] >> 2);
+                    t[3] = (a[1] >> 7) | (a[2] << 1);
+                    t[4] = (a[2] >> 4) | (a[3] << 4);
+                    t[5] = (a[3] >> 1);
+                    t[6] = (a[3] >> 6) | (a[4] << 2);
+                    t[7] = (a[4] >> 3);
+                    a += 5;
 
-					for (j = 0;j < 8;j++)
-						r->coeffs[8 * i + j] = ((uint32_t)(t[j] & 31)*m_Q + 16) >> 5;
-				}
-			}
-			else
-			{
-				throw std::runtime_error("KYBER_POLYCOMPRESSEDBYTES needs to be in {128, 160}");
-			}
-		}
+                    for (j = 0;j < 8;j++)
+                        r->coeffs[8 * i + j] = ((uint32_t)(t[j] & 31)*m_Q + 16) >> 5;
+                }
+            }
+            else
+            {
+                throw std::runtime_error("KYBER_POLYCOMPRESSEDBYTES needs to be in {128, 160}");
+            }
+        }
         /*************************************************
         * Name:        unpack_ciphertext
         *
@@ -917,273 +917,273 @@ namespace
             poly_decompress( v, c + m_poly_vec_compressed_bytes, m_poly_compressed_bytes);
         }
 
-		/*************************************************
-		* Name:        polyvec_ntt
-		*
-		* Description: Apply forward NTT to all elements of a vector of polynomials
-		*
-		* Arguments:   - polyvec *r: pointer to in/output vector of polynomials
-		**************************************************/
-		void polyvec_ntt(polyvec *r)
-		{
-			unsigned int i;
-			for (i = 0;i<m_k;i++)
-				poly_ntt(&r->vec[i]);
-		}
+        /*************************************************
+        * Name:        polyvec_ntt
+        *
+        * Description: Apply forward NTT to all elements of a vector of polynomials
+        *
+        * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
+        **************************************************/
+        void polyvec_ntt(polyvec *r)
+        {
+            unsigned int i;
+            for (i = 0;i<m_k;i++)
+                poly_ntt(&r->vec[i]);
+        }
 
-		/*************************************************
-		* Name:        montgomery_reduce
-		*
-		* Description: Montgomery reduction; given a 32-bit integer a, computes
-		*              16-bit integer congruent to a * R^-1 mod q,
-		*              where R=2^16
-		*
-		* Arguments:   - int32_t a: input integer to be reduced;
-		*                           has to be in {-q2^15,...,q2^15-1}
-		*
-		* Returns:     integer in {-q+1,...,q-1} congruent to a * R^-1 modulo q.
-		**************************************************/
-		int16_t montgomery_reduce(int32_t a)
-		{
-			int32_t t;
-			int16_t u;
+        /*************************************************
+        * Name:        montgomery_reduce
+        *
+        * Description: Montgomery reduction; given a 32-bit integer a, computes
+        *              16-bit integer congruent to a * R^-1 mod q,
+        *              where R=2^16
+        *
+        * Arguments:   - int32_t a: input integer to be reduced;
+        *                           has to be in {-q2^15,...,q2^15-1}
+        *
+        * Returns:     integer in {-q+1,...,q-1} congruent to a * R^-1 modulo q.
+        **************************************************/
+        int16_t montgomery_reduce(int32_t a)
+        {
+            int32_t t;
+            int16_t u;
 
-			u = a*m_Q_inv;
-			t = (int32_t)u*m_Q;
-			t = a - t;
-			t >>= 16;
-			return t;
-		}
-		/*************************************************
-		* Name:        fqmul
-		*
-		* Description: Multiplication followed by Montgomery reduction
-		*
-		* Arguments:   - int16_t a: first factor
-		*              - int16_t b: second factor
-		*
-		* Returns 16-bit integer congruent to a*b*R^{-1} mod q
-		**************************************************/
-		int16_t fqmul(int16_t a, int16_t b) {
-			return montgomery_reduce((int32_t)a*b);
-		}
-		/*************************************************
-		* Name:        basemul
-		*
-		* Description: Multiplication of polynomials in Zq[X]/(X^2-zeta)
-		*              used for multiplication of elements in Rq in NTT domain
-		*
-		* Arguments:   - int16_t r[2]:       pointer to the output polynomial
-		*              - const int16_t a[2]: pointer to the first factor
-		*              - const int16_t b[2]: pointer to the second factor
-		*              - int16_t zeta:       integer defining the reduction polynomial
-		**************************************************/
-		void basemul(int16_t r[2],
-			const int16_t a[2],
-			const int16_t b[2],
-			int16_t zeta)
-		{
-			r[0] = fqmul(a[1], b[1]);
-			r[0] = fqmul(r[0], zeta);
-			r[0] += fqmul(a[0], b[0]);
+            u = a*m_Q_inv;
+            t = (int32_t)u*m_Q;
+            t = a - t;
+            t >>= 16;
+            return t;
+        }
+        /*************************************************
+        * Name:        fqmul
+        *
+        * Description: Multiplication followed by Montgomery reduction
+        *
+        * Arguments:   - int16_t a: first factor
+        *              - int16_t b: second factor
+        *
+        * Returns 16-bit integer congruent to a*b*R^{-1} mod q
+        **************************************************/
+        int16_t fqmul(int16_t a, int16_t b) {
+            return montgomery_reduce((int32_t)a*b);
+        }
+        /*************************************************
+        * Name:        basemul
+        *
+        * Description: Multiplication of polynomials in Zq[X]/(X^2-zeta)
+        *              used for multiplication of elements in Rq in NTT domain
+        *
+        * Arguments:   - int16_t r[2]:       pointer to the output polynomial
+        *              - const int16_t a[2]: pointer to the first factor
+        *              - const int16_t b[2]: pointer to the second factor
+        *              - int16_t zeta:       integer defining the reduction polynomial
+        **************************************************/
+        void basemul(int16_t r[2],
+            const int16_t a[2],
+            const int16_t b[2],
+            int16_t zeta)
+        {
+            r[0] = fqmul(a[1], b[1]);
+            r[0] = fqmul(r[0], zeta);
+            r[0] += fqmul(a[0], b[0]);
 
-			r[1] = fqmul(a[0], b[1]);
-			r[1] += fqmul(a[1], b[0]);
-		}
-
-
-		/*************************************************
-		* Name:        poly_basemul_montgomery
-		*
-		* Description: Multiplication of two polynomials in NTT domain
-		*
-		* Arguments:   - poly *r:       pointer to output polynomial
-		*              - const poly *a: pointer to first input polynomial
-		*              - const poly *b: pointer to second input polynomial
-		**************************************************/
-		void poly_basemul_montgomery(poly *r, const poly *a, const poly *b)
-		{
-			unsigned int i;
-			for (i = 0;i<m_N/ 4;i++) {
-				basemul(&r->coeffs[4 * i], &a->coeffs[4 * i], &b->coeffs[4 * i], zetas[64 + i]);
-				basemul(&r->coeffs[4 * i + 2], &a->coeffs[4 * i + 2], &b->coeffs[4 * i + 2],
-					-zetas[64 + i]);
-			}
-		}
-		/*************************************************
-		* Name:        polyvec_pointwise_acc_montgomery
-		*
-		* Description: Pointwise multiply elements of a and b, accumulate into r,
-		*              and multiply by 2^-16.
-		*
-		* Arguments: - poly *r:          pointer to output polynomial
-		*            - const polyvec *a: pointer to first input vector of polynomials
-		*            - const polyvec *b: pointer to second input vector of polynomials
-		**************************************************/
-		void polyvec_pointwise_acc_montgomery(poly *r,
-			const polyvec *a,
-			const polyvec *b)
-		{
-			unsigned int i;
-			poly t;
-
-			poly_basemul_montgomery(r, &a->vec[0], &b->vec[0]);
-			for (i = 1;i<m_k;i++) {
-				poly_basemul_montgomery(&t, &a->vec[i], &b->vec[i]);
-				poly_add(r, r, &t);
-			}
-
-			poly_reduce(r);
-		}
+            r[1] = fqmul(a[0], b[1]);
+            r[1] += fqmul(a[1], b[0]);
+        }
 
 
-		/*************************************************
-		* Name:        barrett_reduce
-		*
-		* Description: Barrett reduction; given a 16-bit integer a, computes
-		*              16-bit integer congruent to a mod q in {0,...,q}
-		*
-		* Arguments:   - int16_t a: input integer to be reduced
-		*
-		* Returns:     integer in {0,...,q} congruent to a modulo q.
-		**************************************************/
-		int16_t barrett_reduce(int16_t a) {
-			int16_t t;
-			const int16_t v = ((1U << 26) + m_Q/ 2) / m_Q;
+        /*************************************************
+        * Name:        poly_basemul_montgomery
+        *
+        * Description: Multiplication of two polynomials in NTT domain
+        *
+        * Arguments:   - poly *r:       pointer to output polynomial
+        *              - const poly *a: pointer to first input polynomial
+        *              - const poly *b: pointer to second input polynomial
+        **************************************************/
+        void poly_basemul_montgomery(poly *r, const poly *a, const poly *b)
+        {
+            unsigned int i;
+            for (i = 0;i<m_N/ 4;i++) {
+                basemul(&r->coeffs[4 * i], &a->coeffs[4 * i], &b->coeffs[4 * i], zetas[64 + i]);
+                basemul(&r->coeffs[4 * i + 2], &a->coeffs[4 * i + 2], &b->coeffs[4 * i + 2],
+                    -zetas[64 + i]);
+            }
+        }
+        /*************************************************
+        * Name:        polyvec_pointwise_acc_montgomery
+        *
+        * Description: Pointwise multiply elements of a and b, accumulate into r,
+        *              and multiply by 2^-16.
+        *
+        * Arguments: - poly *r:          pointer to output polynomial
+        *            - const polyvec *a: pointer to first input vector of polynomials
+        *            - const polyvec *b: pointer to second input vector of polynomials
+        **************************************************/
+        void polyvec_pointwise_acc_montgomery(poly *r,
+            const polyvec *a,
+            const polyvec *b)
+        {
+            unsigned int i;
+            poly t;
 
-			t = (int32_t)v*a >> 26;
-			t *= m_Q;
-			return a - t;
-		}
-		/*************************************************
-		* Name:        invntt_tomont
-		*
-		* Description: Inplace inverse number-theoretic transform in Rq and
-		*              multiplication by Montgomery factor 2^16.
-		*              Input is in bitreversed order, output is in standard order
-		*
-		* Arguments:   - int16_t r[256]: pointer to input/output vector of elements
-		*                                of Zq
-		**************************************************/
-		void invntt(int16_t r[256]) {
-			unsigned int start, len, j, k;
-			int16_t t, zeta;
+            poly_basemul_montgomery(r, &a->vec[0], &b->vec[0]);
+            for (i = 1;i<m_k;i++) {
+                poly_basemul_montgomery(&t, &a->vec[i], &b->vec[i]);
+                poly_add(r, r, &t);
+            }
 
-			k = 0;
-			for (len = 2; len <= 128; len <<= 1) {
-				for (start = 0; start < 256; start = j + len) {
-					zeta = zetas_inv[k++];
-					for (j = start; j < start + len; ++j) {
-						t = r[j];
-						r[j] = barrett_reduce(t + r[j + len]);
-						r[j + len] = t - r[j + len];
-						r[j + len] = fqmul(zeta, r[j + len]);
-					}
-				}
-			}
-
-			for (j = 0; j < 256; ++j)
-				r[j] = fqmul(r[j], zetas_inv[127]);
-		}
-
-		/*************************************************
-		* Name:        poly_invntt_tomont
-		*
-		* Description: Computes inverse of negacyclic number-theoretic transform (NTT)
-		*              of a polynomial in place;
-		*              inputs assumed to be in bitreversed order, output in normal order
-		*
-		* Arguments:   - uint16_t *a: pointer to in/output polynomial
-		**************************************************/
-		void poly_invntt_tomont(poly *r)
-		{
-			invntt(r->coeffs);
-		}
+            poly_reduce(r);
+        }
 
 
-		/*************************************************
-		* Name:        ntt
-		*
-		* Description: Inplace number-theoretic transform (NTT) in Rq
-		*              input is in standard order, output is in bitreversed order
-		*
-		* Arguments:   - int16_t r[256]: pointer to input/output vector of elements
-		*                                of Zq
-		**************************************************/
-		void ntt(int16_t r[256]) {
-			unsigned int len, start, j, k;
-			int16_t t, zeta;
+        /*************************************************
+        * Name:        barrett_reduce
+        *
+        * Description: Barrett reduction; given a 16-bit integer a, computes
+        *              16-bit integer congruent to a mod q in {0,...,q}
+        *
+        * Arguments:   - int16_t a: input integer to be reduced
+        *
+        * Returns:     integer in {0,...,q} congruent to a modulo q.
+        **************************************************/
+        int16_t barrett_reduce(int16_t a) {
+            int16_t t;
+            const int16_t v = ((1U << 26) + m_Q/ 2) / m_Q;
 
-			k = 1;
-			for (len = 128; len >= 2; len >>= 1) {
-				for (start = 0; start < 256; start = j + len) {
-					zeta = zetas[k++];
-					for (j = start; j < start + len; ++j) {
-						t = fqmul(zeta, r[j + len]);
-						r[j + len] = r[j] - t;
-						r[j] = r[j] + t;
-					}
-				}
-			}
-		}
+            t = (int32_t)v*a >> 26;
+            t *= m_Q;
+            return a - t;
+        }
+        /*************************************************
+        * Name:        invntt_tomont
+        *
+        * Description: Inplace inverse number-theoretic transform in Rq and
+        *              multiplication by Montgomery factor 2^16.
+        *              Input is in bitreversed order, output is in standard order
+        *
+        * Arguments:   - int16_t r[256]: pointer to input/output vector of elements
+        *                                of Zq
+        **************************************************/
+        void invntt(int16_t r[256]) {
+            unsigned int start, len, j, k;
+            int16_t t, zeta;
+
+            k = 0;
+            for (len = 2; len <= 128; len <<= 1) {
+                for (start = 0; start < 256; start = j + len) {
+                    zeta = zetas_inv[k++];
+                    for (j = start; j < start + len; ++j) {
+                        t = r[j];
+                        r[j] = barrett_reduce(t + r[j + len]);
+                        r[j + len] = t - r[j + len];
+                        r[j + len] = fqmul(zeta, r[j + len]);
+                    }
+                }
+            }
+
+            for (j = 0; j < 256; ++j)
+                r[j] = fqmul(r[j], zetas_inv[127]);
+        }
+
+        /*************************************************
+        * Name:        poly_invntt_tomont
+        *
+        * Description: Computes inverse of negacyclic number-theoretic transform (NTT)
+        *              of a polynomial in place;
+        *              inputs assumed to be in bitreversed order, output in normal order
+        *
+        * Arguments:   - uint16_t *a: pointer to in/output polynomial
+        **************************************************/
+        void poly_invntt_tomont(poly *r)
+        {
+            invntt(r->coeffs);
+        }
 
 
-		/*************************************************
-		* Name:        poly_sub
-		*
-		* Description: Subtract two polynomials
-		*
-		* Arguments: - poly *r:       pointer to output polynomial
-		*            - const poly *a: pointer to first input polynomial
-		*            - const poly *b: pointer to second input polynomial
-		**************************************************/
-		void poly_sub(poly *r, const poly *a, const poly *b)
-		{
-			unsigned int i;
-			for (i = 0;i<m_N;i++)
-				r->coeffs[i] = a->coeffs[i] - b->coeffs[i];
-		}
+        /*************************************************
+        * Name:        ntt
+        *
+        * Description: Inplace number-theoretic transform (NTT) in Rq
+        *              input is in standard order, output is in bitreversed order
+        *
+        * Arguments:   - int16_t r[256]: pointer to input/output vector of elements
+        *                                of Zq
+        **************************************************/
+        void ntt(int16_t r[256]) {
+            unsigned int len, start, j, k;
+            int16_t t, zeta;
+
+            k = 1;
+            for (len = 128; len >= 2; len >>= 1) {
+                for (start = 0; start < 256; start = j + len) {
+                    zeta = zetas[k++];
+                    for (j = start; j < start + len; ++j) {
+                        t = fqmul(zeta, r[j + len]);
+                        r[j + len] = r[j] - t;
+                        r[j] = r[j] + t;
+                    }
+                }
+            }
+        }
 
 
-		/*************************************************
-		* Name:        poly_reduce
-		*
-		* Description: Applies Barrett reduction to all coefficients of a polynomial
-		*              for details of the Barrett reduction see comments in reduce.c
-		*
-		* Arguments:   - poly *r: pointer to input/output polynomial
-		**************************************************/
-		void poly_reduce(poly *r)
-		{
-			unsigned int i;
-			for (i = 0;i<m_N;i++)
-				r->coeffs[i] = barrett_reduce(r->coeffs[i]);
-		}
+        /*************************************************
+        * Name:        poly_sub
+        *
+        * Description: Subtract two polynomials
+        *
+        * Arguments: - poly *r:       pointer to output polynomial
+        *            - const poly *a: pointer to first input polynomial
+        *            - const poly *b: pointer to second input polynomial
+        **************************************************/
+        void poly_sub(poly *r, const poly *a, const poly *b)
+        {
+            unsigned int i;
+            for (i = 0;i<m_N;i++)
+                r->coeffs[i] = a->coeffs[i] - b->coeffs[i];
+        }
 
 
-		/*************************************************
-		* Name:        poly_tomsg
-		*
-		* Description: Convert polynomial to 32-byte message
-		*
-		* Arguments:   - uint8_t *msg: pointer to output message
-		*              - poly *a:      pointer to input polynomial
-		**************************************************/
-		void poly_tomsg(uint8_t msg[32], poly *a)  // TODO msg [ symbytes]
-		{
-			unsigned int i, j;
-			uint16_t t;
+        /*************************************************
+        * Name:        poly_reduce
+        *
+        * Description: Applies Barrett reduction to all coefficients of a polynomial
+        *              for details of the Barrett reduction see comments in reduce.c
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void poly_reduce(poly *r)
+        {
+            unsigned int i;
+            for (i = 0;i<m_N;i++)
+                r->coeffs[i] = barrett_reduce(r->coeffs[i]);
+        }
 
-			poly_csubq(a);
 
-			for (i = 0;i<m_N / 8;i++) {
-				msg[i] = 0;
-				for (j = 0;j<8;j++) {
-					t = ((((uint16_t)a->coeffs[8 * i + j] << 1) + m_Q / 2) / m_Q) & 1;
-					msg[i] |= t << j;
-				}
-			}
-		}
+        /*************************************************
+        * Name:        poly_tomsg
+        *
+        * Description: Convert polynomial to 32-byte message
+        *
+        * Arguments:   - uint8_t *msg: pointer to output message
+        *              - poly *a:      pointer to input polynomial
+        **************************************************/
+        void poly_tomsg(uint8_t msg[32], poly *a)  // TODO msg [ symbytes]
+        {
+            unsigned int i, j;
+            uint16_t t;
+
+            poly_csubq(a);
+
+            for (i = 0;i<m_N / 8;i++) {
+                msg[i] = 0;
+                for (j = 0;j<8;j++) {
+                    t = ((((uint16_t)a->coeffs[8 * i + j] << 1) + m_Q / 2) / m_Q) & 1;
+                    msg[i] |= t << j;
+                }
+            }
+        }
 
         /*************************************************
         * Name:        indcpa_dec
@@ -1280,27 +1280,27 @@ namespace
                 m_k = 2;
                 m_poly_vec_compressed_bytes = m_k * 320;
                 m_poly_compressed_bytes = 128;
-				m_KYBER_ETA1 = 3;
+                m_KYBER_ETA1 = 3;
             }
             else if ( mode == KyberMode::Kyber768 )
             {
                 m_k = 3;
                 m_poly_vec_compressed_bytes = m_k * 320;
                 m_poly_compressed_bytes = 128;
-				m_KYBER_ETA1 = 2;
+                m_KYBER_ETA1 = 2;
             }
             else if ( mode == KyberMode::Kyber1024 )
             {
                 m_k = 4;
                 m_poly_vec_compressed_bytes = m_k * 352;
                 m_poly_compressed_bytes = 160;
-				m_KYBER_ETA1 = 2;
+                m_KYBER_ETA1 = 2;
             }
             else
             {
                 throw std::runtime_error( "invalid kyber mode" );
             }
-    
+
             m_poly_vec_bytes = m_k * m_poly_bytes;
             m_public_key_bytes = m_poly_vec_bytes + m_sym_bytes;
             m_secret_key_bytes = m_poly_vec_bytes + m_public_key_bytes + 2 * m_sym_bytes;
@@ -1379,52 +1379,52 @@ namespace
         unsigned int buflen, off;
 
         for (i = 0; i < m_k; i++) {
-			for (j = 0; j < m_k; j++) {
+            for (j = 0; j < m_k; j++) {
 
-				secure_vector< uint64_t > spongeState;
-				spongeState.resize(25);
-				size_t spongeStatePos = 0;
-				if (transposed)
-				{
-					// TODO 90s variant uses aes
-					unsigned int h;
-					uint8_t extseed1[m_sym_bytes + 2];
+                secure_vector< uint64_t > spongeState;
+                spongeState.resize(25);
+                size_t spongeStatePos = 0;
+                if (transposed)
+                {
+                    // TODO 90s variant uses aes
+                    unsigned int h;
+                    uint8_t extseed1[m_sym_bytes + 2];
 
-					for (h = 0;h < m_sym_bytes;h++)
-					{
-						extseed1[h] = seed[h];
-					}
-					extseed1[h++] = i;
-					extseed1[h] = j;
+                    for (h = 0;h < m_sym_bytes;h++)
+                    {
+                        extseed1[h] = seed[h];
+                    }
+                    extseed1[h++] = i;
+                    extseed1[h] = j;
 
-					// normal kyber not 90s
+                    // normal kyber not 90s
 
-					spongeStatePos = Botan::SHA_3::absorb(m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2);
+                    spongeStatePos = Botan::SHA_3::absorb(m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2);
 
-				}
-				else
-				{
-					unsigned int h;
-					uint8_t extseed1[m_sym_bytes + 2];
+                }
+                else
+                {
+                    unsigned int h;
+                    uint8_t extseed1[m_sym_bytes + 2];
 
-					for (h = 0;h < m_sym_bytes;h++)
-					{
-						extseed1[h] = seed[h];
-					}
-					extseed1[h++] = j;
-					extseed1[h] = i;
+                    for (h = 0;h < m_sym_bytes;h++)
+                    {
+                        extseed1[h] = seed[h];
+                    }
+                    extseed1[h++] = j;
+                    extseed1[h] = i;
 
-					// normal kyber not 90s
-					spongeStatePos = Botan::SHA_3::absorb(m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2);
+                    // normal kyber not 90s
+                    spongeStatePos = Botan::SHA_3::absorb(m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2);
 
-				}
+                }
 
-				// normal kyber not 90s
-				uint8_t tmp[504];
-				Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-				Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp, 504);
+                // normal kyber not 90s
+                uint8_t tmp[504];
+                Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
+                Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp, 504);
 
-				std::vector <uint8_t> buf_std(tmp, tmp + (m_gen_matrix_nblocks * m_XOF_BLOCKBYTES + 2));
+                std::vector <uint8_t> buf_std(tmp, tmp + (m_gen_matrix_nblocks * m_XOF_BLOCKBYTES + 2));
 
                 buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES;
                 ctr = rej_uniform(a[i].vec[j].coeffs, m_N, buf_std.data(), buflen);
@@ -1435,9 +1435,9 @@ namespace
                         buf_std[k] = buf_std[buflen - off + k];
 
 
-					// normal kyber not 90s
-					Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-					Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp + off, 200);
+                    // normal kyber not 90s
+                    Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
+                    Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp + off, 200);
 
 
                     buflen = off + m_XOF_BLOCKBYTES;
@@ -1457,37 +1457,37 @@ namespace
         constexpr static size_t m_poly_bytes = 384;
 
         constexpr static size_t m_ETA2 = 2;
-		constexpr static size_t m_Q_inv = 62209; // q^-1 mod 2^16
+        constexpr static size_t m_Q_inv = 62209; // q^-1 mod 2^16
         constexpr static size_t m_XOF_BLOCKBYTES = 168; // SHAKE128 Rate
-		constexpr static size_t m_SHAKE256_RATE = 136*8; // shake absorb rate
-		constexpr static size_t m_SHAKE128_RATE = 168*8;
-		constexpr static size_t m_KYBER_ETA2 = 2;
-			
-		const int16_t zetas[128] = {
-		  2285, 2571, 2970, 1812, 1493, 1422, 287, 202, 3158, 622, 1577, 182, 962,
-		  2127, 1855, 1468, 573, 2004, 264, 383, 2500, 1458, 1727, 3199, 2648, 1017,
-		  732, 608, 1787, 411, 3124, 1758, 1223, 652, 2777, 1015, 2036, 1491, 3047,
-		  1785, 516, 3321, 3009, 2663, 1711, 2167, 126, 1469, 2476, 3239, 3058, 830,
-		  107, 1908, 3082, 2378, 2931, 961, 1821, 2604, 448, 2264, 677, 2054, 2226,
-		  430, 555, 843, 2078, 871, 1550, 105, 422, 587, 177, 3094, 3038, 2869, 1574,
-		  1653, 3083, 778, 1159, 3182, 2552, 1483, 2727, 1119, 1739, 644, 2457, 349,
-		  418, 329, 3173, 3254, 817, 1097, 603, 610, 1322, 2044, 1864, 384, 2114, 3193,
-		  1218, 1994, 2455, 220, 2142, 1670, 2144, 1799, 2051, 794, 1819, 2475, 2459,
-		  478, 3221, 3021, 996, 991, 958, 1869, 1522, 1628
-		};
+        constexpr static size_t m_SHAKE256_RATE = 136*8; // shake absorb rate
+        constexpr static size_t m_SHAKE128_RATE = 168*8;
+        constexpr static size_t m_KYBER_ETA2 = 2;
 
-		const int16_t zetas_inv[128] = {
-			1701, 1807, 1460, 2371, 2338, 2333, 308, 108, 2851, 870, 854, 1510, 2535,
-			1278, 1530, 1185, 1659, 1187, 3109, 874, 1335, 2111, 136, 1215, 2945, 1465,
-			1285, 2007, 2719, 2726, 2232, 2512, 75, 156, 3000, 2911, 2980, 872, 2685,
-			1590, 2210, 602, 1846, 777, 147, 2170, 2551, 246, 1676, 1755, 460, 291, 235,
-			3152, 2742, 2907, 3224, 1779, 2458, 1251, 2486, 2774, 2899, 1103, 1275, 2652,
-			1065, 2881, 725, 1508, 2368, 398, 951, 247, 1421, 3222, 2499, 271, 90, 853,
-			1860, 3203, 1162, 1618, 666, 320, 8, 2813, 1544, 282, 1838, 1293, 2314, 552,
-			2677, 2106, 1571, 205, 2918, 1542, 2721, 2597, 2312, 681, 130, 1602, 1871,
-			829, 2946, 3065, 1325, 2756, 1861, 1474, 1202, 2367, 3147, 1752, 2707, 171,
-			3127, 3042, 1907, 1836, 1517, 359, 758, 1441
-		};
+        const int16_t zetas[128] = {
+          2285, 2571, 2970, 1812, 1493, 1422, 287, 202, 3158, 622, 1577, 182, 962,
+          2127, 1855, 1468, 573, 2004, 264, 383, 2500, 1458, 1727, 3199, 2648, 1017,
+          732, 608, 1787, 411, 3124, 1758, 1223, 652, 2777, 1015, 2036, 1491, 3047,
+          1785, 516, 3321, 3009, 2663, 1711, 2167, 126, 1469, 2476, 3239, 3058, 830,
+          107, 1908, 3082, 2378, 2931, 961, 1821, 2604, 448, 2264, 677, 2054, 2226,
+          430, 555, 843, 2078, 871, 1550, 105, 422, 587, 177, 3094, 3038, 2869, 1574,
+          1653, 3083, 778, 1159, 3182, 2552, 1483, 2727, 1119, 1739, 644, 2457, 349,
+          418, 329, 3173, 3254, 817, 1097, 603, 610, 1322, 2044, 1864, 384, 2114, 3193,
+          1218, 1994, 2455, 220, 2142, 1670, 2144, 1799, 2051, 794, 1819, 2475, 2459,
+          478, 3221, 3021, 996, 991, 958, 1869, 1522, 1628
+        };
+
+        const int16_t zetas_inv[128] = {
+            1701, 1807, 1460, 2371, 2338, 2333, 308, 108, 2851, 870, 854, 1510, 2535,
+            1278, 1530, 1185, 1659, 1187, 3109, 874, 1335, 2111, 136, 1215, 2945, 1465,
+            1285, 2007, 2719, 2726, 2232, 2512, 75, 156, 3000, 2911, 2980, 872, 2685,
+            1590, 2210, 602, 1846, 777, 147, 2170, 2551, 246, 1676, 1755, 460, 291, 235,
+            3152, 2742, 2907, 3224, 1779, 2458, 1251, 2486, 2774, 2899, 1103, 1275, 2652,
+            1065, 2881, 725, 1508, 2368, 398, 951, 247, 1421, 3222, 2499, 271, 90, 853,
+            1860, 3203, 1162, 1618, 666, 320, 8, 2813, 1544, 282, 1838, 1293, 2314, 552,
+            2677, 2106, 1571, 205, 2918, 1542, 2721, 2597, 2312, 681, 130, 1602, 1871,
+            829, 2946, 3065, 1325, 2756, 1861, 1474, 1202, 2367, 3147, 1752, 2707, 171,
+            3127, 3042, 1907, 1836, 1517, 359, 758, 1441
+        };
         size_t m_k;
         size_t m_poly_vec_bytes;
         size_t m_poly_vec_compressed_bytes;
@@ -1496,8 +1496,8 @@ namespace
         size_t m_secret_key_bytes;
         size_t m_ciphertext_bytes;
         size_t m_gen_matrix_nblocks;
-		size_t m_KYBER_ETA1;
-		bool m_kyber_90s = false; 
+        size_t m_KYBER_ETA1;
+        bool m_kyber_90s = false;
     };
 }
 
@@ -1521,7 +1521,7 @@ namespace Botan
             BOTAN_UNUSED(salt, salt_len);
 
             secure_vector<uint8_t> plaintext;
-			plaintext.resize(desired_shared_key_len);
+            plaintext.resize(desired_shared_key_len);
             secure_vector<uint8_t> ciphertext;
 
             kyber_encrypt(ciphertext, plaintext, m_key.public_key_bits(), rng);
@@ -1555,21 +1555,21 @@ namespace Botan
             // Multitarget countermeasure for coins + contributory KEM
             sha3_256_botan->update(pk);
             auto tmp = sha3_256_botan->final();
-			secBuf.insert(secBuf.end(), tmp.begin(), tmp.end());
+            secBuf.insert(secBuf.end(), tmp.begin(), tmp.end());
 
             sha3_512_botan->update(secBuf);
             secKr = sha3_512_botan->final();
 
-            // coins are in kr+KYBER_SYMBYTES 
+            // coins are in kr+KYBER_SYMBYTES
             kyber_internal.indcpa_enc(ct, secBuf.data(), pk, secKr.data() + sym_bytes );
 
-            // overwrite coins in kr with H(c) 
+            // overwrite coins in kr with H(c)
             sha3_256_botan->update(ct);
             tmp = sha3_256_botan->final();
-            
-			std::copy(tmp.begin(), tmp.end(), secKr.begin() + sym_bytes);
 
-            // hash concatenation of pre-k and H(c) to k 
+            std::copy(tmp.begin(), tmp.end(), secKr.begin() + sym_bytes);
+
+            // hash concatenation of pre-k and H(c) to k
             shake_256_botan->update(secKr.data(), 2 * sym_bytes );
             sharedSecret = shake_256_botan->final();
         }
@@ -1593,7 +1593,7 @@ namespace Botan
             BOTAN_UNUSED(salt, salt_len);
 
             secure_vector<uint8_t> plaintext;
-			plaintext.resize(desired_shared_key_len);
+            plaintext.resize(desired_shared_key_len);
             kyber_decrypt(plaintext, encap_key, len_encap_key, m_key.private_key_bits());
 
             return plaintext;
@@ -1645,7 +1645,7 @@ namespace Botan
             sha3_256_botan->update(ct, ciphertext_bytes );
             auto tmp = sha3_256_botan->final();
             secure_vector<uint8_t> secKrFinal{ secKr.begin(), secKr.begin() + sym_bytes };
-			secKrFinal.insert(secKrFinal.end(),tmp.begin(),tmp.end());
+            secKrFinal.insert(secKrFinal.end(),tmp.begin(),tmp.end());
 
             secure_vector<uint8_t> secKrFinalFail( sk_data + secret_key_bytes - sym_bytes, sk_data + secret_key_bytes);
             /* hash concatenation of pre-k and H(c) to k */
@@ -1661,18 +1661,18 @@ namespace Botan
     {
         return "kyber-r3";
     }
-    
+
     AlgorithmIdentifier Kyber_PublicKey::algorithm_identifier() const
-    { 
+    {
         return AlgorithmIdentifier(get_oid(), AlgorithmIdentifier::USE_EMPTY_PARAM);
     }
 
     size_t Kyber_PublicKey::estimated_strength() const
-    { 
+    {
         /* NIST Strength 1 - Kyber512 - AES 128
          * NIST Strenght 3 - Kyber 768 - AES 192
-         * NIST Strenght 5 - Kyber 1024 - AES 256 
-         */        
+         * NIST Strenght 5 - Kyber 1024 - AES 256
+         */
         switch (m_kyber_mode)
          {
          case KyberMode::Kyber512:
@@ -1691,7 +1691,7 @@ namespace Botan
 
     Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode ) :
         m_kyber_mode( mode ), m_public_key( pub_key ) {}
-    
+
     std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
     {
         return m_public_key;
@@ -1719,7 +1719,7 @@ namespace Botan
         return result;
     }
 
-	Kyber_PrivateKey::Kyber_PrivateKey( RandomNumberGenerator& rng, KyberMode mode )
+    Kyber_PrivateKey::Kyber_PrivateKey( RandomNumberGenerator& rng, KyberMode mode )
     {
         *this = generate_kyber_key(rng, mode);
     }
@@ -1747,7 +1747,7 @@ namespace Botan
         const auto secret_key_bytes = kyber_internal.get_secret_key_bytes();
         const auto sym_bytes = kyber_internal.get_sym_bytes();
 
-		std::copy(hash_output.begin(), hash_output.end(), sk.begin() + secret_key_bytes - 2 * sym_bytes);
+        std::copy(hash_output.begin(), hash_output.end(), sk.begin() + secret_key_bytes - 2 * sym_bytes);
         /* Value z for pseudo-random output on reject */
         rng.randomize(sk.data() + secret_key_bytes - sym_bytes, sym_bytes);
 
