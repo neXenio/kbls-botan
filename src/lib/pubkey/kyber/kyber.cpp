@@ -554,7 +554,7 @@ namespace
                 spongeStatePos = Botan::SHA_3::absorb(m_SHAKE256_RATE, spongeState, spongeStatePos, extkey, sizeof(extkey));
 
                 // normal kyber not 90s
-                uint8_t tmp[504];
+                uint8_t tmp[506];
                 Botan::SHA_3::finish(m_SHAKE256_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
                 Botan::SHA_3::expand(m_SHAKE256_RATE, spongeState, tmp, m_KYBER_ETA1*m_N/4 );
 
@@ -1420,9 +1420,9 @@ namespace
                 }
 
                 // normal kyber not 90s
-                uint8_t tmp[504];
+                uint8_t tmp[506];
                 Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp, 504);
+                Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp, 506);
 
                 std::vector <uint8_t> buf_std(tmp, tmp + (m_gen_matrix_nblocks * m_XOF_BLOCKBYTES + 2));
 
@@ -1697,7 +1697,7 @@ namespace Botan
         return m_public_key;
     }
 
-    size_t Kyber_PublicKey::key_length() const { return m_public_key.size(); };
+    size_t Kyber_PublicKey::key_length() const { return m_public_key.size(); }
 
     KyberMode Kyber_PublicKey::get_mode() const { return m_kyber_mode; }
 
