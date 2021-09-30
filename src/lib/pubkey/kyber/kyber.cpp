@@ -567,6 +567,7 @@ namespace
 			else
 			{
 				// TODO 90s
+				throw Not_Implemented("Kyber 90s is still TODO");
 			}
 		}
 
@@ -1517,6 +1518,8 @@ namespace Botan
             const uint8_t salt[],
             size_t salt_len) override
         {
+            BOTAN_UNUSED(salt, salt_len);
+
             secure_vector<uint8_t> plaintext;
 			plaintext.resize(desired_shared_key_len);
             secure_vector<uint8_t> ciphertext;
@@ -1587,6 +1590,8 @@ namespace Botan
             const uint8_t salt[],
             size_t salt_len) override
         {
+            BOTAN_UNUSED(salt, salt_len);
+
             secure_vector<uint8_t> plaintext;
 			plaintext.resize(desired_shared_key_len);
             kyber_decrypt(plaintext, encap_key, len_encap_key, m_key.private_key_bits());
@@ -1685,7 +1690,7 @@ namespace Botan
     }
 
     Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode ) :
-        m_public_key( pub_key ), m_kyber_mode( mode ) {}
+        m_kyber_mode( mode ), m_public_key( pub_key ) {}
     
     std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
     {
@@ -1759,6 +1764,8 @@ namespace Botan
             const std::string& params,
             const std::string& provider) const
     {
+        BOTAN_UNUSED(rng, params);
+
         if (provider == "base" || provider.empty())
             return std::unique_ptr<PK_Ops::KEM_Encryption>(new Kyber_KEM_Encryptor(*this));
         throw Provider_Not_Found(algo_name(), provider);
@@ -1770,6 +1777,8 @@ namespace Botan
             const std::string& params,
             const std::string& provider ) const
     {
+        BOTAN_UNUSED(rng, params);
+
         if ( provider == "base" || provider.empty() )
             return std::unique_ptr<PK_Ops::KEM_Decryption>( new Kyber_KEM_Decryptor( *this ) );
         throw Provider_Not_Found( algo_name(), provider );
