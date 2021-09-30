@@ -6,8 +6,6 @@
 */
 
 #include "tests.h"
-#include <iostream>
-#include <botan/cipher_mode.h>
 #include <botan/block_cipher.h>
 
 #if defined(BOTAN_HAS_KYBER)
@@ -57,6 +55,7 @@ namespace Botan_Tests {
          diversifier    - an 8 byte diversifier
          maxlen         - maximum number of bytes (less than 2**32) generated under this seed and diversifier
          */
+        /*
         int
             seedexpander_init( AES_XOF_struct* ctx,
                 unsigned char* seed,
@@ -85,6 +84,7 @@ namespace Botan_Tests {
 
             return RNG_SUCCESS;
         }
+        */
 
         /*
          seedexpander()
@@ -92,6 +92,7 @@ namespace Botan_Tests {
             x    - returns the XOF data
             xlen - number of bytes to return
          */
+        /*
         int
             seedexpander( AES_XOF_struct* ctx, unsigned char* x, unsigned long xlen )
         {
@@ -135,6 +136,7 @@ namespace Botan_Tests {
 
             return RNG_SUCCESS;
         }
+        */
 
         void
             AES256_CTR_DRBG_Update( unsigned char* provided_data,
@@ -187,6 +189,7 @@ namespace Botan_Tests {
                 unsigned char* personalization_string,
                 int security_strength )
         {
+            BOTAN_UNUSED(security_strength);
             unsigned char   seed_material[48];
 
             memcpy( seed_material, entropy_input, 48 );
@@ -247,6 +250,7 @@ namespace Botan_Tests {
 
             void add_entropy( const uint8_t data[], size_t len ) override
             {
+                BOTAN_UNUSED(len);
                 randombytes_init( data, nullptr, 256 );
             }
 
@@ -326,7 +330,7 @@ namespace Botan_Tests {
             }
         };
 
-        BOTAN_REGISTER_TEST( "kyber", KYBER_Tests );
+        BOTAN_REGISTER_TEST("kyber", "kyber", KYBER_Tests );
 
 
 
@@ -355,7 +359,7 @@ namespace Botan_Tests {
                 std::unique_ptr<Botan::RandomNumberGenerator> kyber_test_rng;
                 kyber_test_rng.reset( new Kyber_Test_RNG( seed_in ) );
 
-                // Alice            
+                // Alice
                 auto priv_key = Botan::Kyber_PrivateKey( *kyber_test_rng, Botan::KyberMode::Kyber512 );
                 result.test_eq( "Public Key Output", priv_key.public_key_bits(), pk_in );
                 result.test_eq( "Secret Key Output", priv_key.private_key_bits(), sk_in );
@@ -377,9 +381,9 @@ namespace Botan_Tests {
             }
         };
 
-        BOTAN_REGISTER_TEST( "kyber_kat", KYBER_KAT_Tests );
-#endif 
+        BOTAN_REGISTER_TEST("kyber", "kyber_kat", KYBER_KAT_Tests );
+#endif
 
-    };
+    }
 
 }
