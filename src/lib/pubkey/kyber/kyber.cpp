@@ -1452,11 +1452,11 @@ namespace
         constexpr static size_t m_Q = 3329;
 
         constexpr static size_t m_sym_bytes = 32;
-        constexpr static size_t m_ss_bytes = 32;
+        // constexpr static size_t m_ss_bytes = 32;
 
         constexpr static size_t m_poly_bytes = 384;
 
-        constexpr static size_t m_ETA2 = 2;
+        // constexpr static size_t m_ETA2 = 2;
         constexpr static size_t m_Q_inv = 62209; // q^-1 mod 2^16
         constexpr static size_t m_XOF_BLOCKBYTES = 168; // SHAKE128 Rate
         constexpr static size_t m_SHAKE256_RATE = 136*8; // shake absorb rate
