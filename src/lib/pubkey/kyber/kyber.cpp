@@ -554,15 +554,11 @@ namespace
                 spongeStatePos = Botan::SHA_3::absorb(m_SHAKE256_RATE, spongeState, spongeStatePos, extkey, sizeof(extkey));
 
                 // normal kyber not 90s
-                uint8_t tmp[506];
+                secure_vector<uint8_t> buf_std(m_KYBER_ETA1 * m_N / 4);
                 Botan::SHA_3::finish(m_SHAKE256_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                Botan::SHA_3::expand(m_SHAKE256_RATE, spongeState, tmp, m_KYBER_ETA1*m_N/4 );
-
-                secure_vector<uint8_t> buf_std(tmp, tmp + (m_KYBER_ETA1*m_N / 4));
+                Botan::SHA_3::expand(m_SHAKE256_RATE, spongeState, buf_std.data(), m_KYBER_ETA1 * m_N / 4);
 
                 return buf_std;
-
-                //shake256(out, outlen, extkey, sizeof(extkey));
             }
             else
             {
@@ -1420,13 +1416,12 @@ namespace
                 }
 
                 // normal kyber not 90s
-                uint8_t tmp[506];
+                buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES; // 504 (not sure for 90s mode)
+                // 2 extra bytes to buf_std for the expansion in the while loop
+                std::vector <uint8_t> buf_std(buflen + 2);
                 Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp, 506);
+                Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, buf_std.data(), buflen);
 
-                std::vector <uint8_t> buf_std(tmp, tmp + (m_gen_matrix_nblocks * m_XOF_BLOCKBYTES + 2));
-
-                buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES;
                 ctr = rej_uniform(a[i].vec[j].coeffs, m_N, buf_std.data(), buflen);
 
                 while (ctr < m_N) {
@@ -1437,7 +1432,7 @@ namespace
 
                     // normal kyber not 90s
                     Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                    Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, tmp + off, 200);
+                    Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, buf_std.data() + off, 200);
 
 
                     buflen = off + m_XOF_BLOCKBYTES;
