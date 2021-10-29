@@ -1416,7 +1416,7 @@ namespace
                 }
 
                 // normal kyber not 90s
-                buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES + 2;
+                buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES; // 504 (not sure for 90s mode)
                 // 2 extra bytes to buf_std for the expansion in the while loop
                 std::vector <uint8_t> buf_std(buflen + 2);
                 Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
@@ -1431,8 +1431,8 @@ namespace
 
 
                     // normal kyber not 90s
-                    Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                    Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, buf_std.data() + off, 200);
+                    Botan::SHA_3::permute( spongeState.data() );
+                    Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
 
 
                     buflen = off + m_XOF_BLOCKBYTES;
