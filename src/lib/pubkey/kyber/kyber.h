@@ -15,8 +15,11 @@ namespace Botan {
     enum class KyberMode
     {
         Kyber512,
+        Kyber512_90s,
         Kyber768,
-        Kyber1024
+        Kyber768_90s,
+        Kyber1024,
+        Kyber1024_90s
     };
 
     class BOTAN_PUBLIC_API(2, 0) Kyber_PublicKey : public virtual Public_Key

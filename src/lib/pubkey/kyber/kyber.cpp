@@ -6,6 +6,7 @@
 #include <botan/pubkey.h>
 #include <botan/sha3.h>
 #include <botan/shake.h>
+#include <botan/stream_cipher.h>
 
 namespace
 {
@@ -525,8 +526,10 @@ namespace
         /*************************************************
         * Name:        prf
         *
-        * Description: Usage of SHAKE256 as a PRF, concatenates secret and public input
+        * Description: not 90s: Usage of SHAKE256 as a PRF, concatenates secret and public input
         *              and then generates outlen bytes of SHAKE256 output
+        *              90s mode: Usage of AES-256 CRT as a PRF, where "key" is used as the key and "nonce" is zero-padded
+        *              to a 12-byte nonce. The counter of CTR mode is initialized to zero
         *
         * Arguments:   - const uint8_t *key: pointer to the key
         *                                    (of length KYBER_SYMBYTES)
@@ -539,7 +542,7 @@ namespace
         {
             if (!m_kyber_90s)
             {
-                // TODO only normal kyber no 90s
+                // only normal kyber no 90s
                 unsigned int i;
                 uint8_t extkey[m_sym_bytes + 1];
 
@@ -562,8 +565,18 @@ namespace
             }
             else
             {
-                // TODO 90s
-                throw Not_Implemented("Kyber 90s is still TODO");
+                // 90s mode
+                std::vector<uint8_t> buffer(12, 0);
+                buffer.at(0) = nonce;
+                uint8_t iv[1] = { 0 };
+
+                std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+                cipher->set_key( key, 32 );
+                // IV is zero padded to block length internally
+                cipher->set_iv( iv, 1 );
+
+                cipher->encrypt( buffer );
+
             }
         }
 
@@ -1271,31 +1284,44 @@ namespace
 
         Kyber_Internal_Operation( KyberMode mode )
         {
-            if ( mode == KyberMode::Kyber512 )
+            switch ( mode )
             {
+            case KyberMode::Kyber512:
+            case KyberMode::Kyber512_90s:
                 m_k = 2;
                 m_poly_vec_compressed_bytes = m_k * 320;
                 m_poly_compressed_bytes = 128;
                 m_KYBER_ETA1 = 3;
-            }
-            else if ( mode == KyberMode::Kyber768 )
-            {
+                break;
+            case KyberMode::Kyber768:
+            case KyberMode::Kyber768_90s:
                 m_k = 3;
                 m_poly_vec_compressed_bytes = m_k * 320;
                 m_poly_compressed_bytes = 128;
                 m_KYBER_ETA1 = 2;
-            }
-            else if ( mode == KyberMode::Kyber1024 )
-            {
+                break;
+            case KyberMode::Kyber1024:
+            case KyberMode::Kyber1024_90s:
                 m_k = 4;
                 m_poly_vec_compressed_bytes = m_k * 352;
                 m_poly_compressed_bytes = 160;
                 m_KYBER_ETA1 = 2;
+                break;
+            default:
+                throw std::runtime_error( "invalid kyber mode" );
+                break;
+            }
+            if( mode == KyberMode::Kyber512_90s || mode == KyberMode::Kyber768_90s || mode == KyberMode::Kyber1024_90s )
+            {
+                m_kyber_90s = true;
+                m_XOF_BLOCKBYTES = m_XOF_BLOCKBYTES_90s;
             }
             else
             {
-                throw std::runtime_error( "invalid kyber mode" );
+                m_kyber_90s = false;
+                m_XOF_BLOCKBYTES = m_XOF_BLOCKBYTES_non_90s;
             }
+            
 
             m_poly_vec_bytes = m_k * m_poly_bytes;
             m_public_key_bytes = m_poly_vec_bytes + m_sym_bytes;
@@ -1313,6 +1339,7 @@ namespace
         size_t get_ciphertext_bytes() const { return m_ciphertext_bytes; }
         size_t get_k() const { return m_k; }
         size_t get_n() const { return m_N; }
+        size_t is_90s() const { return m_kyber_90s; }
 
 
         /*************************************************
@@ -1367,82 +1394,136 @@ namespace
     *              - int transposed:            boolean deciding whether A or A^T
     *                                           is generated
     **************************************************/
-
-    // Not static for benchmarking
     void gen_matrix(std::vector<polyvec>& a, const secure_vector<uint8_t>& seed, int transposed)
     {
-        unsigned int ctr, i, j, k;
-        unsigned int buflen, off;
-
-        for (i = 0; i < m_k; i++) {
-            for (j = 0; j < m_k; j++) {
-
-                secure_vector< uint64_t > spongeState;
-                spongeState.resize(25);
-                size_t spongeStatePos = 0;
-                if (transposed)
-                {
-                    // TODO 90s variant uses aes
-                    unsigned int h;
-                    uint8_t extseed1[m_sym_bytes + 2];
-
-                    for (h = 0;h < m_sym_bytes;h++)
-                    {
-                        extseed1[h] = seed[h];
-                    }
-                    extseed1[h++] = i;
-                    extseed1[h] = j;
-
-                    // normal kyber not 90s
-
-                    spongeStatePos = Botan::SHA_3::absorb(m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2);
-
-                }
-                else
-                {
-                    unsigned int h;
-                    uint8_t extseed1[m_sym_bytes + 2];
-
-                    for (h = 0;h < m_sym_bytes;h++)
-                    {
-                        extseed1[h] = seed[h];
-                    }
-                    extseed1[h++] = j;
-                    extseed1[h] = i;
-
-                    // normal kyber not 90s
-                    spongeStatePos = Botan::SHA_3::absorb(m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2);
-
-                }
-
-                // normal kyber not 90s
-                buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES; // 504 (not sure for 90s mode)
-                // 2 extra bytes to buf_std for the expansion in the while loop
-                std::vector <uint8_t> buf_std(buflen + 2);
-                Botan::SHA_3::finish(m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, buf_std.data(), buflen);
-
-                ctr = rej_uniform(a[i].vec[j].coeffs, m_N, buf_std.data(), buflen);
-
-                while (ctr < m_N) {
-                    off = buflen % 3;
-                    for (k = 0; k < off; k++)
-                        buf_std[k] = buf_std[buflen - off + k];
-
-
-                    // normal kyber not 90s
-                    Botan::SHA_3::permute( spongeState.data() );
-                    Botan::SHA_3::expand(m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
-
-
-                    buflen = off + m_XOF_BLOCKBYTES;
-                    ctr += rej_uniform(a[i].vec[j].coeffs + ctr, m_N - ctr, buf_std.data(), buflen);
-                }
-            }
+        if( !m_kyber_90s )
+        {
+            gen_matrix_normal( a, seed, transposed );
+        }
+        else
+        {
+            gen_matrix_90s( a, seed, transposed );
         }
     }
 
     private:
+        // normal mode, not 90s
+        // We instantiate XOF with SHAKE-128
+        void gen_matrix_normal( std::vector<polyvec>& a, const secure_vector<uint8_t>& seed, int transposed )
+        {
+            unsigned int ctr, i, j, k;
+            unsigned int buflen, off;
+
+            for ( i = 0; i < m_k; i++ ) {
+                for ( j = 0; j < m_k; j++ ) {
+
+                    secure_vector< uint64_t > spongeState;
+                    spongeState.resize( 25 );
+                    size_t spongeStatePos = 0;
+
+                    unsigned int h;
+                    uint8_t extseed1[m_sym_bytes + 2];
+
+                    for ( h = 0; h < m_sym_bytes; h++ )
+                    {
+                        extseed1[h] = seed[h];
+                    }
+                    if ( transposed )
+                    {
+                        extseed1[h++] = i;
+                        extseed1[h] = j;
+                    }
+                    else
+                    {
+                        extseed1[h++] = j;
+                        extseed1[h] = i;
+                    }
+
+                    spongeStatePos = Botan::SHA_3::absorb( m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2 );
+
+                    buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES; // 504 (not in 90s mode)
+                    // 2 extra bytes to buf_std for the expansion in the while loop
+                    std::vector <uint8_t> buf_std( buflen + 2 );
+                    Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
+                    Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
+
+                    ctr = rej_uniform( a[i].vec[j].coeffs, m_N, buf_std.data(), buflen );
+
+                    while ( ctr < m_N ) {
+                        off = buflen % 3;
+                        for ( k = 0; k < off; k++ )
+                            buf_std[k] = buf_std[buflen - off + k];
+
+                        Botan::SHA_3::permute( spongeState.data() );
+                        Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
+
+
+                        buflen = off + m_XOF_BLOCKBYTES;
+                        ctr += rej_uniform( a[i].vec[j].coeffs + ctr, m_N - ctr, buf_std.data(), buflen );
+                    }
+                }
+            }
+        }
+
+        // 90s mode
+        // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
+        // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
+        void gen_matrix_90s( std::vector<polyvec>& a, const secure_vector<uint8_t>& seed, int transposed )
+        {
+            unsigned int ctr, i, j, k;
+            unsigned int buflen, off;
+
+            for ( i = 0; i < m_k; i++ ) {
+                for ( j = 0; j < m_k; j++ ) {
+                    unsigned int h;
+                    std::vector<uint8_t> buffer( 12, 0 );
+                    if ( transposed )
+                    {
+                        buffer.at( 0 ) = i;
+                        buffer.at( 1 ) = j;
+                    }
+                    else
+                    {
+                        buffer.at( 0 ) = j;
+                        buffer.at( 1 ) = i;
+                    }
+
+                    // absorb
+                    std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+                    cipher->set_key( seed );
+                    // IV is zero padded to block length internally
+                    uint8_t iv[1] = { 0 };
+                    cipher->set_iv( iv, 1 );
+
+                    // is this still squeeze or already the first absorb?
+                    cipher->encrypt( buffer );
+
+                    buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES;
+                    // 2 extra bytes to buf_std for the expansion in the while loop
+                    std::vector <uint8_t> buf_std( buflen + 2 );
+                    //Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
+                    //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
+
+                    ctr = rej_uniform( a[i].vec[j].coeffs, m_N, buf_std.data(), buflen );
+
+                    while ( ctr < m_N ) {
+                        off = buflen % 3;
+                        for ( k = 0; k < off; k++ )
+                            buf_std[k] = buf_std[buflen - off + k];
+
+
+                        // normal kyber not 90s
+                       // Botan::SHA_3::permute( spongeState.data() );
+                        //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
+
+
+                        buflen = off + m_XOF_BLOCKBYTES;
+                        ctr += rej_uniform( a[i].vec[j].coeffs + ctr, m_N - ctr, buf_std.data(), buflen );
+                    }
+                }
+            }
+        }
+
         constexpr static size_t m_N = 256;
         constexpr static size_t m_Q = 3329;
 
@@ -1453,7 +1534,8 @@ namespace
 
         // constexpr static size_t m_ETA2 = 2;
         constexpr static size_t m_Q_inv = 62209; // q^-1 mod 2^16
-        constexpr static size_t m_XOF_BLOCKBYTES = 168; // SHAKE128 Rate
+        constexpr static size_t m_XOF_BLOCKBYTES_non_90s  = 168; // SHAKE128 Rate
+        constexpr static size_t m_XOF_BLOCKBYTES_90s = 64; // AES256CTR_BLOCKBYTES
         constexpr static size_t m_SHAKE256_RATE = 136*8; // shake absorb rate
         constexpr static size_t m_SHAKE128_RATE = 168*8;
         constexpr static size_t m_KYBER_ETA2 = 2;
@@ -1490,9 +1572,10 @@ namespace
         size_t m_public_key_bytes;
         size_t m_secret_key_bytes;
         size_t m_ciphertext_bytes;
+        size_t m_XOF_BLOCKBYTES;
         size_t m_gen_matrix_nblocks;
         size_t m_KYBER_ETA1;
-        bool m_kyber_90s = false;
+        bool m_kyber_90s;
     };
 }
 
@@ -1537,36 +1620,48 @@ namespace Botan
             rng.randomize( buf.data(), buf.size() );
             /* Don't release system RNG output */
 
-            std::unique_ptr<HashFunction> sha3_256_botan(HashFunction::create("SHA-3(256)"));
-            std::unique_ptr<HashFunction> sha3_512_botan(HashFunction::create("SHA-3(512)"));
-            std::unique_ptr<HashFunction> shake_256_botan(HashFunction::create("SHAKE-256"));
+            // naming from kyber spec
+            std::unique_ptr<HashFunction> H;
+            std::unique_ptr<HashFunction> G;
+            std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
+            if( !kyber_internal.is_90s() )
+            {
+                H = HashFunction::create( "SHA-3(256)" );
+                G = HashFunction::create( "SHA-3(512)" );
+            }
+            else
+            {
+                H = HashFunction::create( "SHA-256" );
+                G = HashFunction::create( "SHA-512" );
+            }
+            
 
             secure_vector<uint8_t> secBuf;
             secure_vector<uint8_t> secKr;
 
-            sha3_256_botan->update(buf);
-            secBuf = sha3_256_botan->final();
+            H->update(buf);
+            secBuf = H->final();
 
             // Multitarget countermeasure for coins + contributory KEM
-            sha3_256_botan->update(pk);
-            auto tmp = sha3_256_botan->final();
+            H->update(pk);
+            auto tmp = H->final();
             secBuf.insert(secBuf.end(), tmp.begin(), tmp.end());
 
-            sha3_512_botan->update(secBuf);
-            secKr = sha3_512_botan->final();
+            G->update(secBuf);
+            secKr = G->final();
 
             // coins are in kr+KYBER_SYMBYTES
             kyber_internal.indcpa_enc(ct, secBuf.data(), pk, secKr.data() + sym_bytes );
 
             // overwrite coins in kr with H(c)
-            sha3_256_botan->update(ct);
-            tmp = sha3_256_botan->final();
+            H->update(ct);
+            tmp = H->final();
 
             std::copy(tmp.begin(), tmp.end(), secKr.begin() + sym_bytes);
 
             // hash concatenation of pre-k and H(c) to k
-            shake_256_botan->update(secKr.data(), 2 * sym_bytes );
-            sharedSecret = shake_256_botan->final();
+            KDF->update(secKr.data(), 2 * sym_bytes );
+            sharedSecret = KDF->final();
         }
 
         const Kyber_PublicKey& m_key;
@@ -1608,9 +1703,20 @@ namespace Botan
             Kyber_Internal_Operation kyber_internal( m_key.get_mode() );
             const std::vector<uint8_t> pk( sk_unlocked.begin() + kyber_internal.get_poly_vec_bytes(), sk_unlocked.end() );
 
-            std::unique_ptr<HashFunction> sha3_256_botan(HashFunction::create("SHA-3(256)"));
-            std::unique_ptr<HashFunction> sha3_512_botan(HashFunction::create("SHA-3(512)"));
-            std::unique_ptr<HashFunction> shake_256_botan(HashFunction::create("SHAKE-256"));
+            // naming from kyber spec
+            std::unique_ptr<HashFunction> H;
+            std::unique_ptr<HashFunction> G;
+            std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
+            if ( !kyber_internal.is_90s() )
+            {
+                H = HashFunction::create( "SHA-3(256)" );
+                G = HashFunction::create( "SHA-3(512)" );
+            }
+            else
+            {
+                H = HashFunction::create( "SHA-256" );
+                G = HashFunction::create( "SHA-512" );
+            }
 
             secure_vector<uint8_t> secBuf;
             secure_vector<uint8_t> secKr;
@@ -1626,8 +1732,8 @@ namespace Botan
             {
                 secBuf.at(sym_bytes + i) = sk_unlocked.at( secret_key_bytes - 2 * sym_bytes + i);
             }
-            sha3_512_botan->update(secBuf);
-            secKr = sha3_512_botan->final();
+            G->update(secBuf);
+            secKr = G->final();
 
             /* coins are in kr+KYBER_SYMBYTES */
             secure_vector<uint8_t> cmp;
@@ -1637,16 +1743,16 @@ namespace Botan
             fail = !constant_time_compare(ct, cmp.data(), ciphertext_bytes);
 
             /* overwrite coins in kr with H(c) */
-            sha3_256_botan->update(ct, ciphertext_bytes );
-            auto tmp = sha3_256_botan->final();
+            H->update(ct, ciphertext_bytes );
+            auto tmp = H->final();
             secure_vector<uint8_t> secKrFinal{ secKr.begin(), secKr.begin() + sym_bytes };
             secKrFinal.insert(secKrFinal.end(),tmp.begin(),tmp.end());
 
             secure_vector<uint8_t> secKrFinalFail( sk_data + secret_key_bytes - sym_bytes, sk_data + secret_key_bytes);
             /* hash concatenation of pre-k and H(c) to k */
             /* Overwrite pre-k with z on re-encryption failure */
-            fail ? sha3_256_botan->update(secKrFinalFail) : shake_256_botan->update(secKrFinal);
-            ss = shake_256_botan->final();
+            fail ? H->update(secKrFinalFail) : KDF->update(secKrFinal);
+            ss = KDF->final();
         }
 
         const Kyber_PrivateKey& m_key;
@@ -1671,12 +1777,15 @@ namespace Botan
         switch (m_kyber_mode)
          {
          case KyberMode::Kyber512:
+         case KyberMode::Kyber512_90s:
              return 128;
              break;
          case KyberMode::Kyber768:
+         case KyberMode::Kyber768_90s:
              return 192;
              break;
          case KyberMode::Kyber1024:
+         case KyberMode::Kyber1024_90s:
              return 256;
              break;
          default:
@@ -1781,7 +1890,7 @@ namespace Botan
 
     bool Kyber_PrivateKey::check_key( RandomNumberGenerator& rng, bool ) const
     {
-        auto pub_key_alice = Kyber_PublicKey( this->public_key_bits(), KyberMode::Kyber512 );
+        auto pub_key_alice = Kyber_PublicKey( this->public_key_bits(), KyberMode::Kyber512 ); // TO DO: no hard coded mode
         PK_KEM_Encryptor encryptor_bob( pub_key_alice, rng );
 
         secure_vector<uint8_t> cipher_text, key_bob;
