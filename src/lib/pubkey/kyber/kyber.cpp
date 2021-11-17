@@ -8,6 +8,8 @@
 #include <botan/shake.h>
 #include <botan/stream_cipher.h>
 
+#include <array>
+
 namespace
 {
     using namespace Botan;
@@ -16,15 +18,15 @@ namespace
     public:
 
 
-        typedef struct {
+        struct poly {
             // TODO Use m_N
-            int16_t coeffs[256]; // coeffs[m_N]
-        } poly;
+            std::array<int16_t, 256> coeffs; // coeffs[m_N]
+        };
 
-        typedef struct {
+        struct polyvec {
             // TODO Use m_k
-            poly vec[4]; // vec[m_k]
-        } polyvec;
+            std::array<poly, 4> vec; // vec[m_k] , use std::vector instead
+        };
 
 
         /*************************************************
@@ -820,9 +822,9 @@ namespace
             gen_matrix( at, seed, 1 );
 
             for ( i = 0; i < m_k; i++ )
-                poly_getnoise_eta1( sp.vec + i, coins, nonce++ );
+                poly_getnoise_eta1( sp.vec.data() + i, coins, nonce++ );
             for ( i = 0; i < m_k; i++ )
-                poly_getnoise_eta2( ep.vec + i, coins, nonce++ );
+                poly_getnoise_eta2( ep.vec.data() + i, coins, nonce++ );
             poly_getnoise_eta2( &epp, coins, nonce++ );
 
             polyvec_ntt( &sp );
@@ -857,7 +859,7 @@ namespace
         **************************************************/
         void poly_ntt(poly *r)
         {
-            ntt(r->coeffs);
+            ntt(r->coeffs.data());
             poly_reduce(r);
         }
 
@@ -1106,7 +1108,7 @@ namespace
         **************************************************/
         void poly_invntt_tomont(poly *r)
         {
-            invntt(r->coeffs);
+            invntt(r->coeffs.data());
         }
 
 
@@ -1447,7 +1449,7 @@ namespace
                     Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
                     Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
 
-                    ctr = rej_uniform( a[i].vec[j].coeffs, m_N, buf_std.data(), buflen );
+                    ctr = rej_uniform( a[i].vec[j].coeffs.data(), m_N, buf_std.data(), buflen );
 
                     while ( ctr < m_N ) {
                         off = buflen % 3;
@@ -1459,7 +1461,7 @@ namespace
 
 
                         buflen = off + m_XOF_BLOCKBYTES;
-                        ctr += rej_uniform( a[i].vec[j].coeffs + ctr, m_N - ctr, buf_std.data(), buflen );
+                        ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, m_N - ctr, buf_std.data(), buflen );
                     }
                 }
             }
@@ -1504,7 +1506,7 @@ namespace
                     //Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
                     //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
 
-                    ctr = rej_uniform( a[i].vec[j].coeffs, m_N, buf_std.data(), buflen );
+                    ctr = rej_uniform( a[i].vec[j].coeffs.data(), m_N, buf_std.data(), buflen );
 
                     while ( ctr < m_N ) {
                         off = buflen % 3;
@@ -1518,7 +1520,7 @@ namespace
 
 
                         buflen = off + m_XOF_BLOCKBYTES;
-                        ctr += rej_uniform( a[i].vec[j].coeffs + ctr, m_N - ctr, buf_std.data(), buflen );
+                        ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, m_N - ctr, buf_std.data(), buflen );
                     }
                 }
             }
