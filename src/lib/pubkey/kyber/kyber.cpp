@@ -55,9 +55,10 @@ namespace
         **************************************************/
         void poly_csubq(poly *r)
         {
-            unsigned int i;
-            for (i = 0;i<m_N;i++)
-                r->coeffs[i] = csubq(r->coeffs[i]);
+            for (auto& coeff : r->coeffs)
+            {
+                coeff = csubq(coeff);
+            }
         }
 
         /*************************************************
@@ -70,47 +71,22 @@ namespace
         *              - poly *a:    pointer to input polynomial
         *              TO DO XXX
         **************************************************/
-        void poly_tobytes( std::vector<uint8_t>& r, size_t offset_r, poly* a )
+        template <typename T = std::vector<uint8_t>>
+        T poly_tobytes(poly* a)
         {
-            unsigned int i;
-            uint16_t t0, t1;
-
             poly_csubq( a );
 
-            for ( i = 0; i < get_n() / 2; i++ ) {
-                t0 = a->coeffs[2 * i];
-                t1 = a->coeffs[2 * i + 1];
-                r[3 * i + 0 + offset_r] = ( t0 >> 0 );
-                r[3 * i + 1 + offset_r] = ( t0 >> 8 ) | ( t1 << 4 );
-                r[3 * i + 2 + offset_r] = ( t1 >> 4 );
+            T r(a->coeffs.size() / 2 * 3);
+
+            for (size_t i = 0; i < a->coeffs.size() / 2; ++i ) {
+                const uint16_t t0 = a->coeffs[2 * i];
+                const uint16_t t1 = a->coeffs[2 * i + 1];
+                r[3 * i + 0] = ( t0 >> 0 );
+                r[3 * i + 1] = ( t0 >> 8 ) | ( t1 << 4 );
+                r[3 * i + 2] = ( t1 >> 4 );
             }
-        }
 
-
-        /*************************************************
-        * Name:        poly_tobytes
-        *
-        * Description: Serialization of a polynomial
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (needs space for KYBER_POLYBYTES bytes)
-        *              - poly *a:    pointer to input polynomial
-        *              TO DO XXX
-        **************************************************/
-        void poly_tobytes( secure_vector<uint8_t>& r, size_t offset_r, poly* a )
-        {
-            unsigned int i;
-            uint16_t t0, t1;
-
-            poly_csubq( a );
-
-            for ( i = 0; i < get_n() / 2; i++ ) {
-                t0 = a->coeffs[2 * i];
-                t1 = a->coeffs[2 * i + 1];
-                r[3 * i + 0 + offset_r] = ( t0 >> 0 );
-                r[3 * i + 1 + offset_r] = ( t0 >> 8 ) | ( t1 << 4 );
-                r[3 * i + 2 + offset_r] = ( t1 >> 4 );
-            }
+            return r;
         }
 
 
@@ -176,27 +152,19 @@ namespace
         *              - polyvec *a: pointer to input vector of polynomials
         *              TO DO XXX
         **************************************************/
-        void polyvec_tobytes( std::vector<uint8_t>& r, polyvec* a )
+        template <typename T = std::vector<uint8_t>>
+        T polyvec_tobytes(polyvec* a )
         {
-            for ( unsigned int i = 0; i < get_k(); i++ )
-                poly_tobytes( r, i * get_poly_bytes(), &a->vec[i] );
-        }
+            T r;
 
+            r.reserve(get_k() * get_poly_bytes());
+            for ( size_t i = 0; i < get_k(); ++i )
+            {
+                const auto poly_asbytes = poly_tobytes<T>(&a->vec[i]);
+                r.insert(r.end(), poly_asbytes.begin(), poly_asbytes.end());
+            }
 
-        /*************************************************
-        * Name:        polyvec_tobytes
-        *
-        * Description: Serialize vector of polynomials
-        *
-        * Arguments:   - std::vector<uint8_t> *r: pointer to output byte array
-        *                            (needs space for KYBER_POLYVECBYTES)
-        *              - polyvec *a: pointer to input vector of polynomials
-        *              TO DO XXX
-        **************************************************/
-        void polyvec_tobytes( secure_vector<uint8_t>& r, polyvec* a )
-        {
-            for ( unsigned int i = 0; i < get_k(); i++ )
-                poly_tobytes( r, i * get_poly_bytes(), &a->vec[i] );
+            return r;
         }
 
 
@@ -1242,7 +1210,7 @@ namespace
         *              - uint8_t *sk: pointer to output private key
                                       (of length KYBER_INDCPA_SECRETKEYBYTES bytes)
         **************************************************/
-        void kyber_indcpa_keypair( std::vector<uint8_t>& pk, secure_vector<uint8_t>& sk, RandomNumberGenerator& rng, KyberMode mode )
+        std::tuple<std::vector<uint8_t>, secure_vector<uint8_t>> kyber_indcpa_keypair(RandomNumberGenerator& rng, KyberMode mode )
         {
             Kyber_Internal_Operation kyberIntOps( mode );
 
@@ -1278,10 +1246,11 @@ namespace
             polyvec_add( &pkpv, &pkpv, &e );
             polyvec_reduce( &pkpv );
 
-            polyvec_tobytes( sk, &skpv );
-            polyvec_tobytes( pk, &pkpv );
-            for ( i = 0; i < kyberIntOps.get_sym_bytes(); i++ )
-                pk[i + kyberIntOps.get_poly_vec_bytes()] = seed.at( i );
+            auto isk = polyvec_tobytes<secure_vector<uint8_t>>(&skpv);
+            auto ipk = polyvec_tobytes<std::vector<uint8_t>>(&pkpv);
+            ipk.insert(ipk.end(), seed.begin(), seed.begin() + kyberIntOps.get_sym_bytes());
+
+            return {ipk, isk};
         }
 
         Kyber_Internal_Operation( KyberMode mode )
@@ -1836,15 +1805,11 @@ namespace Botan
     Kyber_PrivateKey Kyber_PrivateKey::generate_kyber_key(RandomNumberGenerator& rng, KyberMode mode)
     {
         Kyber_Internal_Operation kyber_internal( mode );
-        std::vector<uint8_t> pk( kyber_internal.get_public_key_bytes() );
-        secure_vector<uint8_t> sk( kyber_internal.get_secret_key_bytes() );
 
-        kyber_internal.kyber_indcpa_keypair(pk, sk, rng, mode);
+        auto [pk, sk] = kyber_internal.kyber_indcpa_keypair(rng, mode);
+        sk.insert(sk.end(), pk.begin(), pk.end());
 
         const auto public_key_bytes = kyber_internal.get_public_key_bytes();
-        const auto poly_vec_bytes = kyber_internal.get_poly_vec_bytes();
-        for (size_t i = 0; i < public_key_bytes; i++)
-            sk[i + poly_vec_bytes] = pk[i];
 
         std::unique_ptr<HashFunction> hash3(HashFunction::create("SHA-3(256)"));
         hash3->update(pk.data(), public_key_bytes);
@@ -1853,9 +1818,14 @@ namespace Botan
         const auto secret_key_bytes = kyber_internal.get_secret_key_bytes();
         const auto sym_bytes = kyber_internal.get_sym_bytes();
 
-        std::copy(hash_output.begin(), hash_output.end(), sk.begin() + secret_key_bytes - 2 * sym_bytes);
+        sk.insert(sk.end(), hash_output.begin(), hash_output.end());
+        sk.resize(sk.size() + sym_bytes);
+
         /* Value z for pseudo-random output on reject */
         rng.randomize(sk.data() + secret_key_bytes - sym_bytes, sym_bytes);
+
+        BOTAN_ASSERT(pk.size() == kyber_internal.get_public_key_bytes(), "invalid public key length");
+        BOTAN_ASSERT(sk.size() == kyber_internal.get_secret_key_bytes(), "invalid private key length");
 
         return Kyber_PrivateKey(sk, pk, mode);
     }
