@@ -7,6 +7,8 @@ aes
 rng
 sha3
 shake
+stream
+ctr
 </requires>
 
 <header:public>
