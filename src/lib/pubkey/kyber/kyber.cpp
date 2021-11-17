@@ -361,12 +361,15 @@ namespace
         *              poly *pk:   pointer to the input vector of polynomials b
         *              poly *v:    pointer to the input polynomial v
         **************************************************/
-        void pack_ciphertext( secure_vector<uint8_t>& r,
-            polyvec* b,
-            poly* v )
+        secure_vector<uint8_t> pack_ciphertext( polyvec* b, poly* v )
         {
+            secure_vector<uint8_t> r;
+            r.resize( m_ciphertext_bytes );
+
             polyvec_compress( r, b );
             poly_compress( r, v );
+
+            return r;
         }
 
 
@@ -772,7 +775,7 @@ namespace
         *                                      randomness
         *                                      TO DO XXX
         **************************************************/
-        void indcpa_enc( secure_vector<uint8_t>& c,
+        secure_vector<uint8_t> indcpa_enc(
             const uint8_t m[32], // TODO m [symbyts]
             const std::vector<uint8_t>& pk,
             const uint8_t coins[32] ) // TODO coins (symbytes)
@@ -812,8 +815,7 @@ namespace
             polyvec_reduce( &bp );
             poly_reduce( &v );
 
-            c.resize( m_ciphertext_bytes );
-            pack_ciphertext( c, &bp, &v );
+            return pack_ciphertext( &bp, &v );
         }
 
         /*************************************************
@@ -1571,9 +1573,7 @@ namespace Botan
 
             secure_vector<uint8_t> plaintext;
             plaintext.resize(desired_shared_key_len);
-            secure_vector<uint8_t> ciphertext;
-
-            kyber_encrypt(ciphertext, plaintext, m_key.public_key_bits(), rng);
+            secure_vector<uint8_t> ciphertext = kyber_encrypt(plaintext, m_key.public_key_bits(), rng);
 
             out_shared_key.swap(plaintext);
             out_encapsulated_key.swap(ciphertext);
@@ -1581,7 +1581,7 @@ namespace Botan
 
     private:
 
-        void kyber_encrypt(secure_vector<uint8_t>& ct,
+        secure_vector<uint8_t> kyber_encrypt(
             secure_vector<uint8_t>& sharedSecret,
             const std::vector<uint8_t>& pk, RandomNumberGenerator& rng)
         {
@@ -1622,7 +1622,7 @@ namespace Botan
             secKr = G->final();
 
             // coins are in kr+KYBER_SYMBYTES
-            kyber_internal.indcpa_enc(ct, secBuf.data(), pk, secKr.data() + sym_bytes );
+            auto ct = kyber_internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
 
             // overwrite coins in kr with H(c)
             H->update(ct);
@@ -1633,6 +1633,8 @@ namespace Botan
             // hash concatenation of pre-k and H(c) to k
             KDF->update(secKr.data(), 2 * sym_bytes );
             sharedSecret = KDF->final();
+
+            return ct;
         }
 
         const Kyber_PublicKey& m_key;
@@ -1707,8 +1709,7 @@ namespace Botan
             secKr = G->final();
 
             /* coins are in kr+KYBER_SYMBYTES */
-            secure_vector<uint8_t> cmp;
-            kyber_internal.indcpa_enc(cmp, secBuf.data(), pk, secKr.data() + sym_bytes );
+            auto cmp = kyber_internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
 
             const auto ciphertext_bytes = kyber_internal.get_ciphertext_bytes();
             fail = !constant_time_compare(ct, cmp.data(), ciphertext_bytes);
