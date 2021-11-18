@@ -99,39 +99,39 @@ namespace
         *                            (of length KYBER_POLYCOMPRESSEDBYTES)
         *              - poly *a:    pointer to input polynomial
         **************************************************/
-        void poly_compress( secure_vector<uint8_t>& r, poly* a )
+        secure_vector<uint8_t> poly_compress( poly* a )
         {
-            unsigned int i, j;
-            uint8_t t[8];
+            secure_vector<uint8_t> r(m_poly_compressed_bytes);
 
             poly_csubq( a );
 
+            uint8_t t[8];
             if( m_k == 2 || m_k == 3 )
             {
                 size_t offset = 0;
-                for ( i = 0; i < m_N / 8; i++ ) {
-                    for ( j = 0; j < 8; j++ )
+                for ( size_t i = 0; i < m_N / 8; i++ ) {
+                    for ( size_t j = 0; j < 8; j++ )
                         t[j] = ( ( ( (uint16_t)a->coeffs[8 * i + j] << 4 ) + m_Q / 2 ) / m_Q) & 15;
 
-                    r[0 + m_poly_vec_compressed_bytes + offset] = t[0] | ( t[1] << 4 );
-                    r[1 + m_poly_vec_compressed_bytes + offset] = t[2] | ( t[3] << 4 );
-                    r[2 + m_poly_vec_compressed_bytes + offset] = t[4] | ( t[5] << 4 );
-                    r[3 + m_poly_vec_compressed_bytes + offset] = t[6] | ( t[7] << 4 );
+                    r[0 + offset] = t[0] | ( t[1] << 4 );
+                    r[1 + offset] = t[2] | ( t[3] << 4 );
+                    r[2 + offset] = t[4] | ( t[5] << 4 );
+                    r[3 + offset] = t[6] | ( t[7] << 4 );
                     offset += 4;
                 }
             }
             else if( m_k == 4 )
             {
                 size_t offset = 0;
-                for ( i = 0; i < m_N / 8; i++ ) {
-                    for ( j = 0; j < 8; j++ )
+                for ( size_t i = 0; i < m_N / 8; i++ ) {
+                    for ( size_t j = 0; j < 8; j++ )
                         t[j] = ( ( ( (uint32_t)a->coeffs[8 * i + j] << 5 ) + m_Q / 2 ) / m_Q) & 31;
 
-                    r[0 + m_poly_vec_compressed_bytes + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
-                    r[1 + m_poly_vec_compressed_bytes + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
-                    r[2 + m_poly_vec_compressed_bytes + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
-                    r[3 + m_poly_vec_compressed_bytes + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
-                    r[4 + m_poly_vec_compressed_bytes + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
+                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
+                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
+                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
+                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
+                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
                     offset += 5;
                 }
             }
@@ -139,6 +139,8 @@ namespace
             {
                 throw std::runtime_error( "KYBER_POLYCOMPRESSEDBYTES needs to be in {128, 160}" );
             }
+
+            return r;
         }
 
 
@@ -195,9 +197,11 @@ namespace
         *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
         *              - polyvec *a: pointer to input vector of polynomials
         **************************************************/
-        void polyvec_compress( secure_vector<uint8_t>& r, polyvec* a )
+        secure_vector<uint8_t> polyvec_compress( polyvec* a )
         {
-            unsigned int i, j, k;
+            secure_vector<uint8_t> r(m_poly_vec_compressed_bytes);
+
+            size_t i, j, k;
 
             polyvec_csubq( a );
 
@@ -249,6 +253,8 @@ namespace
             {
                 throw std::runtime_error( "KYBER_POLYCOMPRESSEDBYTES needs to be in {320*KYBER_K, 352*KYBER_K}" );
             }
+
+            return r;
         }
 
 
@@ -363,13 +369,13 @@ namespace
         **************************************************/
         secure_vector<uint8_t> pack_ciphertext( polyvec* b, poly* v )
         {
-            secure_vector<uint8_t> r;
-            r.resize( m_ciphertext_bytes );
+            auto ct = polyvec_compress( b );
+            auto p = poly_compress( v );
+            ct.insert(ct.end(), p.begin(), p.end());
 
-            polyvec_compress( r, b );
-            poly_compress( r, v );
+            BOTAN_ASSERT(ct.size() == m_ciphertext_bytes, "unexpected ciphertext length");
 
-            return r;
+            return ct;
         }
 
 
@@ -1294,7 +1300,7 @@ namespace
                 m_kyber_90s = false;
                 m_XOF_BLOCKBYTES = m_XOF_BLOCKBYTES_non_90s;
             }
-            
+
 
             m_poly_vec_bytes = m_k * m_poly_bytes;
             m_public_key_bytes = m_poly_vec_bytes + m_sym_bytes;
@@ -1605,7 +1611,7 @@ namespace Botan
                 H = HashFunction::create( "SHA-256" );
                 G = HashFunction::create( "SHA-512" );
             }
-            
+
 
             secure_vector<uint8_t> secBuf;
             secure_vector<uint8_t> secKr;
