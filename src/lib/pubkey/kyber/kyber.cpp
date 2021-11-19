@@ -549,19 +549,6 @@ namespace
     class Kyber_Internal_Operation final
     {
     public:
-
-
-        // struct poly {
-        //     // TODO Use m_N
-        //     std::array<int16_t, 256> coeffs; // coeffs[m_N]
-        // };
-
-        // struct polyvec {
-        //     // TODO Use m_k
-        //     std::array<Polynomial, 4> vec; // vec[m_k] , use std::vector instead
-        // };
-
-
         /*************************************************
         * Name:        poly_compress
         *
@@ -614,9 +601,6 @@ namespace
 
             return r;
         }
-
-
-
 
         /*************************************************
         * Name:        polyvec_compress
@@ -867,6 +851,7 @@ namespace
 
                 cipher->encrypt( buffer );
 
+                return {};
             }
         }
 
