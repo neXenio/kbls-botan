@@ -206,6 +206,26 @@ namespace
         }
 
         /*************************************************
+        * Name:        poly_tomsg
+        *
+        * Description: Convert polynomial to 32-byte message
+        *
+        * Arguments:   - uint8_t *msg: pointer to output message
+        *              - poly *a:      pointer to input polynomial
+        **************************************************/
+        void tomsg(uint8_t msg[32]) {  // TODO msg [ symbytes]
+            this->csubq();
+
+            for (size_t i = 0;i<coeffs.size() / 8;++i) {
+                msg[i] = 0;
+                for (size_t j = 0;j<8;++j) {
+                    uint16_t t = ((((uint16_t)this->coeffs[8 * i + j] << 1) + Q / 2) / Q) & 1;
+                    msg[i] |= t << j;
+                }
+            }
+        }
+
+        /*************************************************
         * Name:        poly_frombytes
         *
         * Description: De-serialization of a polynomial;
@@ -1188,30 +1208,6 @@ namespace
 
 
         /*************************************************
-        * Name:        poly_tomsg
-        *
-        * Description: Convert polynomial to 32-byte message
-        *
-        * Arguments:   - uint8_t *msg: pointer to output message
-        *              - poly *a:      pointer to input polynomial
-        **************************************************/
-        void poly_tomsg(uint8_t msg[32], Polynomial *a)  // TODO msg [ symbytes]
-        {
-            unsigned int i, j;
-            uint16_t t;
-
-            a->csubq();
-
-            for (i = 0;i<m_N / 8;i++) {
-                msg[i] = 0;
-                for (j = 0;j<8;j++) {
-                    t = ((((uint16_t)a->coeffs[8 * i + j] << 1) + m_Q / 2) / m_Q) & 1;
-                    msg[i] |= t << j;
-                }
-            }
-        }
-
-        /*************************************************
         * Name:        indcpa_dec
         *
         * Description: Decryption function of the CPA-secure
@@ -1239,8 +1235,7 @@ namespace
 
             mp -= v;
             mp.reduce();
-
-            poly_tomsg( m, &mp );
+            mp.tomsg(m);
         }
 
 
