@@ -12,37 +12,51 @@
 
 namespace
 {
-    using namespace Botan;
-    class Kyber_Internal_Operation final
-    {
-    public:
+    constexpr size_t N = 256;
+    constexpr size_t Q = 3329;
+    constexpr size_t Q_inv = 62209; // q^-1 mod 2^16
 
+    /*************************************************
+    * Name:        csubq
+    *
+    * Description: Conditionallly subtract q
+    *
+    * Arguments:   - int16_t x: input integer
+    *
+    * Returns:     a - q if a >= q, else a
+    **************************************************/
+    int16_t csubq(int16_t a) {
+        a -= Q;
+        a += (a >> 15) & Q;
+        return a;
+    }
 
-        struct poly {
-            // TODO Use m_N
-            std::array<int16_t, 256> coeffs; // coeffs[m_N]
-        };
+     /*************************************************
+     * Name:        montgomery_reduce
+     *
+     * Description: Montgomery reduction; given a 32-bit integer a, computes
+     *              16-bit integer congruent to a * R^-1 mod q,
+     *              where R=2^16
+     *
+     * Arguments:   - int32_t a: input integer to be reduced;
+     *                           has to be in {-q2^15,...,q2^15-1}
+     *
+     * Returns:     integer in {-q+1,...,q-1} congruent to a * R^-1 modulo q.
+     **************************************************/
+     int16_t montgomery_reduce(int32_t a) {
+         int32_t t;
+         int16_t u;
 
-        struct polyvec {
-            // TODO Use m_k
-            std::array<poly, 4> vec; // vec[m_k] , use std::vector instead
-        };
+         u = a*Q_inv;
+         t = (int32_t)u*Q;
+         t = a - t;
+         t >>= 16;
+         return t;
+     }
 
-
-        /*************************************************
-        * Name:        csubq
-        *
-        * Description: Conditionallly subtract q
-        *
-        * Arguments:   - int16_t x: input integer
-        *
-        * Returns:     a - q if a >= q, else a
-        **************************************************/
-        int16_t csubq(int16_t a) {
-            a -= m_Q;
-            a += (a >> 15) & m_Q;
-            return a;
-        }
+    class Polynomial {
+      public:
+        std::array<int16_t, N> coeffs;
 
         /*************************************************
         * Name:        poly_csubq
@@ -53,11 +67,9 @@ namespace
         *
         * Arguments:   - poly *r: pointer to input/output polynomial
         **************************************************/
-        void poly_csubq(poly *r)
-        {
-            for (auto& coeff : r->coeffs)
-            {
-                coeff = csubq(coeff);
+        void csubq() {
+            for (auto& coeff : coeffs) {
+                coeff = ::csubq(coeff);
             }
         }
 
@@ -72,15 +84,14 @@ namespace
         *              TO DO XXX
         **************************************************/
         template <typename T = std::vector<uint8_t>>
-        T poly_tobytes(poly* a)
-        {
-            poly_csubq( a );
+        T tobytes() {
+            this->csubq();
 
-            T r(a->coeffs.size() / 2 * 3);
+            T r(coeffs.size() / 2 * 3);
 
-            for (size_t i = 0; i < a->coeffs.size() / 2; ++i ) {
-                const uint16_t t0 = a->coeffs[2 * i];
-                const uint16_t t1 = a->coeffs[2 * i + 1];
+            for (size_t i = 0; i < coeffs.size() / 2; ++i ) {
+                const uint16_t t0 = coeffs[2 * i];
+                const uint16_t t1 = coeffs[2 * i + 1];
                 r[3 * i + 0] = ( t0 >> 0 );
                 r[3 * i + 1] = ( t0 >> 8 ) | ( t1 << 4 );
                 r[3 * i + 2] = ( t1 >> 4 );
@@ -88,6 +99,75 @@ namespace
 
             return r;
         }
+
+        /*************************************************
+        * Name:        poly_frombytes
+        *
+        * Description: De-serialization of a polynomial;
+        *              inverse of poly_tobytes
+        *
+        * Arguments:   - poly *r:          pointer to output polynomial
+        *              - const uint8_t *a: pointer to input byte array
+        *                                  (of KYBER_POLYBYTES bytes)
+        *                                  TO DO XXX
+        **************************************************/
+        static Polynomial frombytes( const std::vector<uint8_t> &a, const size_t offset=0 ) {
+            Polynomial r;
+            for ( size_t i = 0; i < r.coeffs.size() / 2; ++i ) {
+                r.coeffs[2 * i]     = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
+                r.coeffs[2 * i + 1] = ( ( a[3 * i + 1 + offset] >> 4 ) | ( (uint16_t)a[3 * i + 2 + offset] << 4 ) ) & 0xFFF;
+            }
+            return r;
+        }
+
+        /*************************************************
+        * Name:        poly_add
+        *
+        * Description: Add two polynomials
+        *
+        * Arguments: - poly *r:       pointer to output polynomial
+        *            - const poly *a: pointer to first input polynomial
+        *            - const poly *b: pointer to second input polynomial
+        **************************************************/
+        Polynomial& operator +=(const Polynomial& other) {
+            for (size_t i = 0;i<this->coeffs.size();++i)
+                this->coeffs[i] = this->coeffs[i] + other.coeffs[i];
+            return *this;
+        }
+
+        /*************************************************
+        * Name:        poly_tomont
+        *
+        * Description: Inplace conversion of all coefficients of a polynomial
+        *              from normal domain to Montgomery domain
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void tomont() {
+            const int16_t f = (1ULL << 32) % Q;
+            for (auto &c : coeffs)
+              c = montgomery_reduce((int32_t)c * f);
+        }
+
+
+
+    };
+
+    using namespace Botan;
+    class Kyber_Internal_Operation final
+    {
+    public:
+
+
+        // struct poly {
+        //     // TODO Use m_N
+        //     std::array<int16_t, 256> coeffs; // coeffs[m_N]
+        // };
+
+        struct polyvec {
+            // TODO Use m_k
+            std::array<Polynomial, 4> vec; // vec[m_k] , use std::vector instead
+        };
 
 
         /*************************************************
@@ -99,11 +179,11 @@ namespace
         *                            (of length KYBER_POLYCOMPRESSEDBYTES)
         *              - poly *a:    pointer to input polynomial
         **************************************************/
-        secure_vector<uint8_t> poly_compress( poly* a )
+        secure_vector<uint8_t> poly_compress( Polynomial* a )
         {
             secure_vector<uint8_t> r(m_poly_compressed_bytes);
 
-            poly_csubq( a );
+            a->csubq();
 
             uint8_t t[8];
             if( m_k == 2 || m_k == 3 )
@@ -162,7 +242,7 @@ namespace
             r.reserve(get_k() * get_poly_bytes());
             for ( size_t i = 0; i < get_k(); ++i )
             {
-                const auto poly_asbytes = poly_tobytes<T>(&a->vec[i]);
+                const auto poly_asbytes = a->vec[i].tobytes<T>();
                 r.insert(r.end(), poly_asbytes.begin(), poly_asbytes.end());
             }
 
@@ -183,7 +263,7 @@ namespace
         void polyvec_csubq(polyvec *r)
         {
           for (auto& p : r->vec) {
-                poly_csubq(&p);
+                p.csubq();
           }
         }
 
@@ -320,28 +400,6 @@ namespace
         }
 
 
-        /*************************************************
-        * Name:        poly_frombytes
-        *
-        * Description: De-serialization of a polynomial;
-        *              inverse of poly_tobytes
-        *
-        * Arguments:   - poly *r:          pointer to output polynomial
-        *              - const uint8_t *a: pointer to input byte array
-        *                                  (of KYBER_POLYBYTES bytes)
-        *                                  TO DO XXX
-        **************************************************/
-        poly poly_frombytes( const std::vector<uint8_t> a, size_t offset )
-        {
-            poly r;
-            for ( size_t i = 0; i < get_n() / 2; i++ )
-            {
-                r.coeffs[2 * i] = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
-                r.coeffs[2 * i + 1] = ( ( a[3 * i + 1 + offset] >> 4 ) | ( (uint16_t)a[3 * i + 2 + offset] << 4 ) ) & 0xFFF;
-            }
-            return r;
-        }
-
 
 
         /*************************************************
@@ -358,8 +416,8 @@ namespace
         polyvec polyvec_frombytes( const std::vector<uint8_t> a )
         {
             polyvec r;
-            for ( size_t i = 0; i < get_k(); i++ )
-                r.vec[i] = poly_frombytes( a, i * get_poly_bytes() );
+            for ( size_t i = 0; i < get_k(); ++i )
+                r.vec[i] = Polynomial::frombytes( a, i * get_poly_bytes() );
             return r;
         }
 
@@ -375,7 +433,7 @@ namespace
         *              poly *pk:   pointer to the input vector of polynomials b
         *              poly *v:    pointer to the input polynomial v
         **************************************************/
-        secure_vector<uint8_t> pack_ciphertext( polyvec* b, poly* v )
+        secure_vector<uint8_t> pack_ciphertext( polyvec* b, Polynomial* v )
         {
             auto ct = polyvec_compress( b );
             auto p = poly_compress( v );
@@ -419,26 +477,9 @@ namespace
         polyvec unpack_pk( secure_vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
         {
             auto pk = polyvec_frombytes( packedpk );
-            for ( size_t i = 0; i < get_sym_bytes(); i++ )
+            for ( size_t i = 0; i < get_sym_bytes(); ++i )
                 seed[i] = packedpk[i + get_poly_vec_bytes()];
             return pk;
-        }
-
-
-        /*************************************************
-        * Name:        poly_add
-        *
-        * Description: Add two polynomials
-        *
-        * Arguments: - poly *r:       pointer to output polynomial
-        *            - const poly *a: pointer to first input polynomial
-        *            - const poly *b: pointer to second input polynomial
-        **************************************************/
-        void poly_add(poly *r, const poly *a, const poly *b)
-        {
-            unsigned int i;
-            for (i = 0;i<m_N;i++)
-                r->coeffs[i] = a->coeffs[i] + b->coeffs[i];
         }
 
         /*************************************************
@@ -450,30 +491,13 @@ namespace
         *            - const polyvec *a: pointer to first input vector of polynomials
         *            - const polyvec *b: pointer to second input vector of polynomials
         **************************************************/
-        void polyvec_add(polyvec *r, const polyvec *a, const polyvec *b)
+        void polyvec_add(polyvec *r, [[maybe_unused]] const polyvec *a, const polyvec *b)
         {
+            // TODO: remove unused a when polyvec has +=  --  r =+ b
             unsigned int i;
             for (i = 0;i<m_k;i++)
-                poly_add(&r->vec[i], &a->vec[i], &b->vec[i]);
+                r->vec[i] += b->vec[i];
         }
-
-
-        /*************************************************
-        * Name:        poly_tomont
-        *
-        * Description: Inplace conversion of all coefficients of a polynomial
-        *              from normal domain to Montgomery domain
-        *
-        * Arguments:   - poly *r: pointer to input/output polynomial
-        **************************************************/
-        void poly_tomont(poly *r)
-        {
-            unsigned int i;
-            const int16_t f = (1ULL << 32) % m_Q;
-            for (i = 0;i<m_N;i++)
-                r->coeffs[i] = montgomery_reduce((int32_t)r->coeffs[i] * f);
-        }
-
 
         /*************************************************
         * Name:        polyvec_reduce
@@ -618,9 +642,9 @@ namespace
         * Arguments:   - poly *r:                            pointer to output polynomial
         *              - const secure_vector<uint8_t>& buf: pointer to input byte array
         **************************************************/
-        poly cbd2(const secure_vector<uint8_t>& buf)
+        Polynomial cbd2(const secure_vector<uint8_t>& buf)
         {
-            poly r;
+            Polynomial r;
             if (buf.size() < (2 * m_N / 4))
             {
                 throw std::runtime_error("Cannot cbd2 because buf incompatible buffer length!");
@@ -651,9 +675,9 @@ namespace
         * Arguments:   - poly *r:            pointer to output polynomial
         *              - const uint8_t *buf: pointer to input byte array
         **************************************************/
-        poly cbd3(const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
+        Polynomial cbd3(const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
         {
-            poly r;
+            Polynomial r;
             if (buf.size() < (3 * m_N / 4))
             {
                 throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
@@ -674,7 +698,7 @@ namespace
         }
 
 
-    poly cbd_eta1(const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
+    Polynomial cbd_eta1(const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
     {
         if (buf.size() < (m_KYBER_ETA1*m_N / 4))
         {
@@ -694,7 +718,7 @@ namespace
         }
     }
 
-    poly cbd_eta2( const secure_vector<uint8_t>& buf )
+    Polynomial cbd_eta2( const secure_vector<uint8_t>& buf )
     {
         if (buf.size() < (m_KYBER_ETA2*m_N / 4))
         {
@@ -716,9 +740,9 @@ namespace
         * Arguments:   - poly *r:            pointer to output polynomial
         *              - const uint8_t *msg: pointer to input message
         **************************************************/
-    poly poly_frommsg( const uint8_t msg[], size_t msgLength)
+    Polynomial poly_frommsg( const uint8_t msg[], size_t msgLength)
     {
-        poly r;
+        Polynomial r;
 
         unsigned int i, j;
         int16_t mask;
@@ -749,7 +773,7 @@ namespace
         *                                     (of length KYBER_SYMBYTES bytes)
         *              - uint8_t nonce:       one-byte input nonce
         **************************************************/
-        poly poly_getnoise_eta2(const uint8_t seed[32], uint8_t nonce)
+        Polynomial poly_getnoise_eta2(const uint8_t seed[32], uint8_t nonce)
         {
             auto buf = prf( seed, nonce);
 
@@ -768,7 +792,7 @@ namespace
         *                                     (of length KYBER_SYMBYTES bytes)
         *              - uint8_t nonce:       one-byte input nonce
         **************************************************/
-        poly poly_getnoise_eta1(const uint8_t seed[32], uint8_t nonce)
+        Polynomial poly_getnoise_eta1(const uint8_t seed[32], uint8_t nonce)
         {
             auto buf = prf(seed, nonce);
 
@@ -802,7 +826,7 @@ namespace
             secure_vector<uint8_t> seed( get_sym_bytes() );
             uint8_t nonce = 0;
             polyvec sp, ep, bp;
-            poly v;
+            Polynomial v;
 
             polyvec pkpv = unpack_pk( seed, pk );
             auto k = poly_frommsg( m , m_sym_bytes );
@@ -829,8 +853,8 @@ namespace
             poly_invntt_tomont( &v );
 
             polyvec_add( &bp, &bp, &ep );
-            poly_add( &v, &v, &epp );
-            poly_add( &v, &v, &k );
+            v += epp;
+            v += k;
             polyvec_reduce( &bp );
             poly_reduce( &v );
 
@@ -846,7 +870,7 @@ namespace
         *
         * Arguments:   - uint16_t *r: pointer to in/output polynomial
         **************************************************/
-        void poly_ntt(poly *r)
+        void poly_ntt(Polynomial *r)
         {
             ntt(r->coeffs.data());
             poly_reduce(r);
@@ -863,7 +887,7 @@ namespace
         *              - const uint8_t *a: pointer to input byte array
         *                                  (of length KYBER_POLYCOMPRESSEDBYTES bytes)
         **************************************************/
-        void poly_decompress(poly *r, const uint8_t a[], size_t aLength ) // TODO a[KYBER_POLYCOMPRESSEDBYTES]
+        void poly_decompress(Polynomial *r, const uint8_t a[], size_t aLength ) // TODO a[KYBER_POLYCOMPRESSEDBYTES]
         {
             unsigned int i;
 
@@ -909,7 +933,7 @@ namespace
         *              - poly *v:          pointer to the output polynomial v
         *              - const uint8_t *c: pointer to the input serialized ciphertext
         **************************************************/
-        polyvec unpack_ciphertext( poly* v, const uint8_t* c, size_t c_len )
+        polyvec unpack_ciphertext( Polynomial* v, const uint8_t* c, size_t c_len )
         {
             auto b = polyvec_decompress( c, c_len );
             poly_decompress( v, c + m_poly_vec_compressed_bytes, m_poly_compressed_bytes);
@@ -931,29 +955,6 @@ namespace
                 poly_ntt(&r->vec[i]);
         }
 
-        /*************************************************
-        * Name:        montgomery_reduce
-        *
-        * Description: Montgomery reduction; given a 32-bit integer a, computes
-        *              16-bit integer congruent to a * R^-1 mod q,
-        *              where R=2^16
-        *
-        * Arguments:   - int32_t a: input integer to be reduced;
-        *                           has to be in {-q2^15,...,q2^15-1}
-        *
-        * Returns:     integer in {-q+1,...,q-1} congruent to a * R^-1 modulo q.
-        **************************************************/
-        int16_t montgomery_reduce(int32_t a)
-        {
-            int32_t t;
-            int16_t u;
-
-            u = a*m_Q_inv;
-            t = (int32_t)u*m_Q;
-            t = a - t;
-            t >>= 16;
-            return t;
-        }
         /*************************************************
         * Name:        fqmul
         *
@@ -1001,7 +1002,7 @@ namespace
         *              - const poly *a: pointer to first input polynomial
         *              - const poly *b: pointer to second input polynomial
         **************************************************/
-        void poly_basemul_montgomery(poly *r, const poly *a, const poly *b)
+        void poly_basemul_montgomery(Polynomial *r, const Polynomial *a, const Polynomial *b)
         {
             unsigned int i;
             for (i = 0;i<m_N/ 4;i++) {
@@ -1020,17 +1021,17 @@ namespace
         *            - const polyvec *a: pointer to first input vector of polynomials
         *            - const polyvec *b: pointer to second input vector of polynomials
         **************************************************/
-        void polyvec_pointwise_acc_montgomery(poly *r,
+        void polyvec_pointwise_acc_montgomery(Polynomial *r,
             const polyvec *a,
             const polyvec *b)
         {
             unsigned int i;
-            poly t;
+            Polynomial t;
 
             poly_basemul_montgomery(r, &a->vec[0], &b->vec[0]);
             for (i = 1;i<m_k;i++) {
                 poly_basemul_montgomery(&t, &a->vec[i], &b->vec[i]);
-                poly_add(r, r, &t);
+                *r += t;
             }
 
             poly_reduce(r);
@@ -1095,7 +1096,7 @@ namespace
         *
         * Arguments:   - uint16_t *a: pointer to in/output polynomial
         **************************************************/
-        void poly_invntt_tomont(poly *r)
+        void poly_invntt_tomont(Polynomial *r)
         {
             invntt(r->coeffs.data());
         }
@@ -1137,7 +1138,7 @@ namespace
         *            - const poly *a: pointer to first input polynomial
         *            - const poly *b: pointer to second input polynomial
         **************************************************/
-        void poly_sub(poly *r, const poly *a, const poly *b)
+        void poly_sub(Polynomial *r, const Polynomial *a, const Polynomial *b)
         {
             unsigned int i;
             for (i = 0;i<m_N;i++)
@@ -1153,7 +1154,7 @@ namespace
         *
         * Arguments:   - poly *r: pointer to input/output polynomial
         **************************************************/
-        void poly_reduce(poly *r)
+        void poly_reduce(Polynomial *r)
         {
             unsigned int i;
             for (i = 0;i<m_N;i++)
@@ -1169,12 +1170,12 @@ namespace
         * Arguments:   - uint8_t *msg: pointer to output message
         *              - poly *a:      pointer to input polynomial
         **************************************************/
-        void poly_tomsg(uint8_t msg[32], poly *a)  // TODO msg [ symbytes]
+        void poly_tomsg(uint8_t msg[32], Polynomial *a)  // TODO msg [ symbytes]
         {
             unsigned int i, j;
             uint16_t t;
 
-            poly_csubq(a);
+            a->csubq();
 
             for (i = 0;i<m_N / 8;i++) {
                 msg[i] = 0;
@@ -1202,7 +1203,7 @@ namespace
             const uint8_t* c, size_t c_len,
             const std::vector<uint8_t>& sk )
         {
-            poly v, mp;
+            Polynomial v, mp;
 
             auto bp = unpack_ciphertext( &v, c, c_len );
             auto skpv = unpack_sk( sk );
@@ -1260,7 +1261,7 @@ namespace
             // matrix-vector multiplication
             for ( i = 0; i < kyber_k; i++ ) {
                 polyvec_pointwise_acc_montgomery( &pkpv.vec[i], &a.at( i ), &skpv );
-                poly_tomont( &pkpv.vec[i] );
+                pkpv.vec[i].tomont();
             }
 
             polyvec_add( &pkpv, &pkpv, &e );
@@ -1524,7 +1525,6 @@ namespace
         constexpr static size_t m_poly_bytes = 384;
 
         // constexpr static size_t m_ETA2 = 2;
-        constexpr static size_t m_Q_inv = 62209; // q^-1 mod 2^16
         constexpr static size_t m_XOF_BLOCKBYTES_non_90s  = 168; // SHAKE128 Rate
         constexpr static size_t m_XOF_BLOCKBYTES_90s = 64; // AES256CTR_BLOCKBYTES
         constexpr static size_t m_SHAKE256_RATE = 136*8; // shake absorb rate
