@@ -174,6 +174,51 @@ namespace
         }
 
         /*************************************************
+        * Name:        poly_frombytes
+        *
+        * Description: De-serialization of a polynomial;
+        *              inverse of poly_tobytes
+        *
+        * Arguments:   - poly *r:          pointer to output polynomial
+        *              - const uint8_t *a: pointer to input byte array
+        *                                  (of KYBER_POLYBYTES bytes)
+        *                                  TO DO XXX
+        **************************************************/
+        static Polynomial frombytes( const std::vector<uint8_t> &a, const size_t offset=0 ) {
+            Polynomial r;
+            for ( size_t i = 0; i < r.coeffs.size() / 2; ++i ) {
+                r.coeffs[2 * i]     = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
+                r.coeffs[2 * i + 1] = ( ( a[3 * i + 1 + offset] >> 4 ) | ( (uint16_t)a[3 * i + 2 + offset] << 4 ) ) & 0xFFF;
+            }
+            return r;
+        }
+
+        /*************************************************
+        * Name:        poly_frommsg
+        *
+        * Description: Convert 32-byte message to polynomial
+        *
+        * Arguments:   - poly *r:            pointer to output polynomial
+        *              - const uint8_t *msg: pointer to input message
+        **************************************************/
+        static Polynomial frommsg( const uint8_t msg[], size_t msgLength)
+        {
+            Polynomial r;
+            if (msgLength != N / 8)
+            {
+                throw std::runtime_error("KYBER_INDCPA_MSGBYTES must be equal to KYBER_N/8 bytes!");
+            }
+
+            for (size_t i = 0;i<r.coeffs.size() / 8;++i) {
+                for (size_t j = 0;j<8;j++) {
+                    const auto mask = -(int16_t)((msg[i] >> j) & 1);
+                    r.coeffs[8 * i + j] = mask & ((Q + 1) / 2);
+                }
+            }
+            return r;
+        }
+
+        /*************************************************
         * Name:        poly_tomsg
         *
         * Description: Convert polynomial to 32-byte message
@@ -193,25 +238,6 @@ namespace
             }
         }
 
-        /*************************************************
-        * Name:        poly_frombytes
-        *
-        * Description: De-serialization of a polynomial;
-        *              inverse of poly_tobytes
-        *
-        * Arguments:   - poly *r:          pointer to output polynomial
-        *              - const uint8_t *a: pointer to input byte array
-        *                                  (of KYBER_POLYBYTES bytes)
-        *                                  TO DO XXX
-        **************************************************/
-        static Polynomial frombytes( const std::vector<uint8_t> &a, const size_t offset=0 ) {
-            Polynomial r;
-            for ( size_t i = 0; i < r.coeffs.size() / 2; ++i ) {
-                r.coeffs[2 * i]     = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
-                r.coeffs[2 * i + 1] = ( ( a[3 * i + 1 + offset] >> 4 ) | ( (uint16_t)a[3 * i + 2 + offset] << 4 ) ) & 0xFFF;
-            }
-            return r;
-        }
 
         /*************************************************
         * Name:        poly_add
@@ -889,34 +915,6 @@ namespace
         return cbd2(buf);
     }
 
-        /*************************************************
-        * Name:        poly_frommsg
-        *
-        * Description: Convert 32-byte message to polynomial
-        *
-        * Arguments:   - poly *r:            pointer to output polynomial
-        *              - const uint8_t *msg: pointer to input message
-        **************************************************/
-    Polynomial poly_frommsg( const uint8_t msg[], size_t msgLength)
-    {
-        Polynomial r;
-
-        unsigned int i, j;
-        int16_t mask;
-
-        if (msgLength != m_N / 8)
-        {
-            throw std::runtime_error("KYBER_INDCPA_MSGBYTES must be equal to KYBER_N/8 bytes!");
-        }
-
-            for (i = 0;i<m_N / 8;i++) {
-                for (j = 0;j<8;j++) {
-                    mask = -(int16_t)((msg[i] >> j) & 1);
-                    r.coeffs[8 * i + j] = mask & ((m_Q + 1) / 2);
-                }
-            }
-        return r;
-      }
 
         /*************************************************
         * Name:        poly_getnoise_eta2
@@ -986,7 +984,7 @@ namespace
             Polynomial v;
 
             polyvec pkpv = unpack_pk( seed, pk );
-            auto k = poly_frommsg( m , m_sym_bytes );
+            auto k = Polynomial::frommsg( m , m_sym_bytes );
             const auto kyber_k = get_k();
             std::vector<polyvec> at( kyber_k );
             gen_matrix( at, seed, 1 );
