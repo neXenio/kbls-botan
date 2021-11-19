@@ -342,7 +342,11 @@ namespace
     class PolynomialVector
     {
     public:
-        std::array<Polynomial, 4> vec;
+        PolynomialVector() = delete;
+        explicit PolynomialVector(const size_t k)
+            : vec(k) {}
+
+        std::vector<Polynomial> vec;
 
         /*************************************************
         * Name:        polyvec_frombytes
@@ -359,8 +363,8 @@ namespace
         {
             BOTAN_ASSERT(a.size() >= Polynomial::kSerializedByteCount * k, "wrong byte length for frombytes");
 
-            PolynomialVector r;
-            for ( size_t i = 0; i < k; ++i ) // TODO: use foreach
+            PolynomialVector r(k);
+            for (size_t i = 0; i < k; ++i)
                 r.vec[i] = Polynomial::frombytes( a, i * Polynomial::kSerializedByteCount );
             return r;
         }
@@ -621,7 +625,7 @@ namespace
         **************************************************/
         PolynomialVector polyvec_decompress( const uint8_t* a, size_t a_len )
         {
-            PolynomialVector r;
+            PolynomialVector r(m_k);
             unsigned int i, j, k;
 
             if( a_len == m_k * 352 + m_poly_compressed_bytes )
@@ -999,13 +1003,15 @@ namespace
             unsigned int i;
             secure_vector<uint8_t> seed( get_sym_bytes() );
             uint8_t nonce = 0;
-            PolynomialVector sp, ep, bp;
+            PolynomialVector sp(m_k);
+            PolynomialVector ep(m_k);
+            PolynomialVector bp(m_k);
             Polynomial v;
 
             PolynomialVector pkpv = unpack_pk( seed, pk );
             auto k = Polynomial::frommsg( m , m_sym_bytes );
             const auto kyber_k = get_k();
-            std::vector<PolynomialVector> at( kyber_k );
+            std::vector<PolynomialVector> at( kyber_k, PolynomialVector(m_k) );
             gen_matrix( at, seed, 1 );
 
 
@@ -1221,8 +1227,10 @@ namespace
             byte rand[rand_size];
             uint8_t nonce = 0;
             const auto kyber_k = kyberIntOps.get_k();
-            std::vector<PolynomialVector> a( kyber_k );
-            PolynomialVector e, pkpv, skpv;
+            std::vector<PolynomialVector> a( kyber_k, PolynomialVector(m_k) );
+            PolynomialVector e(m_k);
+            PolynomialVector pkpv(m_k);
+            PolynomialVector skpv(m_k);
 
             rng.randomize( rand, rand_size );
             std::unique_ptr<HashFunction> hash3( HashFunction::create( "SHA-3(512)" ) );
