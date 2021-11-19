@@ -272,6 +272,54 @@ namespace
         }
 
 
+
+        /*************************************************
+        * Name:        poly_basemul_montgomery
+        *
+        * Description: Multiplication of two polynomials in NTT domain
+        *
+        * Arguments:   - poly *r:       pointer to output polynomial
+        *              - const poly *a: pointer to first input polynomial
+        *              - const poly *b: pointer to second input polynomial
+        **************************************************/
+        static Polynomial basemul_montgomery(const Polynomial &a, const Polynomial &b)
+        {
+            /*************************************************
+            * Name:        basemul
+            *
+            * Description: Multiplication of polynomials in Zq[X]/(X^2-zeta)
+            *              used for multiplication of elements in Rq in NTT domain
+            *
+            * Arguments:   - int16_t r[2]:       pointer to the output polynomial
+            *              - const int16_t a[2]: pointer to the first factor
+            *              - const int16_t b[2]: pointer to the second factor
+            *              - int16_t zeta:       integer defining the reduction polynomial
+            **************************************************/
+            auto basemul = [](int16_t r[2],
+                              const int16_t a[2],
+                              const int16_t b[2],
+                              const int16_t zeta)
+            {
+                r[0] = fqmul(a[1], b[1]);
+                r[0] = fqmul(r[0], zeta);
+                r[0] += fqmul(a[0], b[0]);
+
+                r[1] = fqmul(a[0], b[1]);
+                r[1] += fqmul(a[1], b[0]);
+            };
+
+            Polynomial r;
+
+            for (size_t i = 0; i<r.coeffs.size() / 4; ++i) {
+                basemul(&r.coeffs[4 * i], &a.coeffs[4 * i], &b.coeffs[4 * i], zetas[64 + i]);
+                basemul(&r.coeffs[4 * i + 2], &a.coeffs[4 * i + 2], &b.coeffs[4 * i + 2],
+                    -zetas[64 + i]);
+            }
+
+            return r;
+        }
+
+
         /*************************************************
         * Name:        poly_tomont
         *
@@ -370,6 +418,32 @@ namespace
         }
 
         /*************************************************
+        * Name:        polyvec_pointwise_acc_montgomery
+        *
+        * Description: Pointwise multiply elements of a and b, accumulate into r,
+        *              and multiply by 2^-16.
+        *
+        * Arguments: - poly *r:          pointer to output polynomial
+        *            - const polyvec *a: pointer to first input vector of polynomials
+        *            - const polyvec *b: pointer to second input vector of polynomials
+        **************************************************/
+        static Polynomial pointwise_acc_montgomery(
+            const PolynomialVector &a,
+            const PolynomialVector &b)
+        {
+            BOTAN_ASSERT(a.vec.size() == b.vec.size(),
+                         "pointwise_acc_montgomery works on equally sized PolynomialVectors only");
+
+            auto r = Polynomial::basemul_montgomery(a.vec[0], b.vec[0]);
+            for (size_t i = 1; i < a.vec.size(); ++i) {
+                r += Polynomial::basemul_montgomery(a.vec[i], b.vec[i]);
+            }
+
+            r.reduce();
+            return r;
+        }
+
+        /*************************************************
         * Name:        polyvec_tobytes
         *
         * Description: Serialize vector of polynomials
@@ -426,6 +500,7 @@ namespace
                 vec[i] += other.vec[i];
             return *this;
         }
+
 
         /*************************************************
         * Name:        polyvec_reduce
@@ -1006,7 +1081,6 @@ namespace
             PolynomialVector sp(m_k);
             PolynomialVector ep(m_k);
             PolynomialVector bp(m_k);
-            Polynomial v;
 
             PolynomialVector pkpv = unpack_pk( seed, pk );
             auto k = Polynomial::frommsg( m , m_sym_bytes );
@@ -1025,9 +1099,9 @@ namespace
 
             // matrix-vector multiplication
             for ( i = 0; i < m_k; i++ )
-                polyvec_pointwise_acc_montgomery( &bp.vec[i], &at[i], &sp );
+                bp.vec[i] = PolynomialVector::pointwise_acc_montgomery(at[i], sp );
 
-            polyvec_pointwise_acc_montgomery( &v, &pkpv, &sp );
+            auto v = PolynomialVector::pointwise_acc_montgomery(pkpv, sp );
 
             bp.invntt_tomont();
             v.invntt_tomont();
@@ -1106,75 +1180,6 @@ namespace
         }
 
         /*************************************************
-        * Name:        basemul
-        *
-        * Description: Multiplication of polynomials in Zq[X]/(X^2-zeta)
-        *              used for multiplication of elements in Rq in NTT domain
-        *
-        * Arguments:   - int16_t r[2]:       pointer to the output polynomial
-        *              - const int16_t a[2]: pointer to the first factor
-        *              - const int16_t b[2]: pointer to the second factor
-        *              - int16_t zeta:       integer defining the reduction polynomial
-        **************************************************/
-        void basemul(int16_t r[2],
-            const int16_t a[2],
-            const int16_t b[2],
-            int16_t zeta)
-        {
-            r[0] = fqmul(a[1], b[1]);
-            r[0] = fqmul(r[0], zeta);
-            r[0] += fqmul(a[0], b[0]);
-
-            r[1] = fqmul(a[0], b[1]);
-            r[1] += fqmul(a[1], b[0]);
-        }
-
-
-        /*************************************************
-        * Name:        poly_basemul_montgomery
-        *
-        * Description: Multiplication of two polynomials in NTT domain
-        *
-        * Arguments:   - poly *r:       pointer to output polynomial
-        *              - const poly *a: pointer to first input polynomial
-        *              - const poly *b: pointer to second input polynomial
-        **************************************************/
-        void poly_basemul_montgomery(Polynomial *r, const Polynomial *a, const Polynomial *b)
-        {
-            unsigned int i;
-            for (i = 0;i<m_N/ 4;i++) {
-                basemul(&r->coeffs[4 * i], &a->coeffs[4 * i], &b->coeffs[4 * i], zetas[64 + i]);
-                basemul(&r->coeffs[4 * i + 2], &a->coeffs[4 * i + 2], &b->coeffs[4 * i + 2],
-                    -zetas[64 + i]);
-            }
-        }
-        /*************************************************
-        * Name:        polyvec_pointwise_acc_montgomery
-        *
-        * Description: Pointwise multiply elements of a and b, accumulate into r,
-        *              and multiply by 2^-16.
-        *
-        * Arguments: - poly *r:          pointer to output polynomial
-        *            - const polyvec *a: pointer to first input vector of polynomials
-        *            - const polyvec *b: pointer to second input vector of polynomials
-        **************************************************/
-        void polyvec_pointwise_acc_montgomery(Polynomial *r,
-            const PolynomialVector *a,
-            const PolynomialVector *b)
-        {
-            unsigned int i;
-            Polynomial t;
-
-            poly_basemul_montgomery(r, &a->vec[0], &b->vec[0]);
-            for (i = 1;i<m_k;i++) {
-                poly_basemul_montgomery(&t, &a->vec[i], &b->vec[i]);
-                *r += t;
-            }
-
-            r->reduce();
-        }
-
-        /*************************************************
         * Name:        indcpa_dec
         *
         * Description: Decryption function of the CPA-secure
@@ -1191,13 +1196,13 @@ namespace
             const uint8_t* c, size_t c_len,
             const std::vector<uint8_t>& sk )
         {
-            Polynomial v, mp;
+            Polynomial v;
 
             auto bp = unpack_ciphertext( &v, c, c_len );
             auto skpv = unpack_sk( sk );
 
             bp.ntt();
-            polyvec_pointwise_acc_montgomery( &mp, &skpv, &bp );
+            auto mp = PolynomialVector::pointwise_acc_montgomery(skpv, bp);
             mp.invntt_tomont();
 
             mp -= v;
@@ -1249,7 +1254,7 @@ namespace
 
             // matrix-vector multiplication
             for ( i = 0; i < kyber_k; i++ ) {
-                polyvec_pointwise_acc_montgomery( &pkpv.vec[i], &a.at( i ), &skpv );
+                pkpv.vec[i] = PolynomialVector::pointwise_acc_montgomery(a.at( i ), skpv );
                 pkpv.vec[i].tomont();
             }
 
