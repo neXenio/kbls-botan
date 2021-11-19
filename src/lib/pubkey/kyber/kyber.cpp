@@ -117,6 +117,8 @@ namespace
       public:
         std::array<int16_t, N> coeffs;
 
+        static constexpr size_t kSerializedByteCount = N / 2 * 3;
+
         /*************************************************
         * Name:        poly_csubq
         *
@@ -336,6 +338,107 @@ namespace
         }
     };
 
+
+    class PolynomialVector
+    {
+    public:
+        std::array<Polynomial, 4> vec;
+
+        /*************************************************
+        * Name:        polyvec_frombytes
+        *
+        * Description: De-serialize vector of polynomials;
+        *              inverse of polyvec_tobytes
+        *
+        * Arguments:   - uint8_t *r:       pointer to output byte array
+        *              - const polyvec *a: pointer to input vector of polynomials
+        *                                  (of length KYBER_POLYVECBYTES)
+        *                                  TO DO XXX
+        **************************************************/
+        static PolynomialVector frombytes( const std::vector<uint8_t> &a, const size_t k /* TODO: calculate that? */ )
+        {
+            BOTAN_ASSERT(a.size() >= Polynomial::kSerializedByteCount * k, "wrong byte length for frombytes");
+
+            PolynomialVector r;
+            for ( size_t i = 0; i < k; ++i ) // TODO: use foreach
+                r.vec[i] = Polynomial::frombytes( a, i * Polynomial::kSerializedByteCount );
+            return r;
+        }
+
+        /*************************************************
+        * Name:        polyvec_tobytes
+        *
+        * Description: Serialize vector of polynomials
+        *
+        * Arguments:   - std::vector<uint8_t> *r: pointer to output byte array
+        *                            (needs space for KYBER_POLYVECBYTES)
+        *              - polyvec *a: pointer to input vector of polynomials
+        *              TO DO XXX
+        **************************************************/
+        template <typename T = std::vector<uint8_t>>
+        T tobytes(const size_t k)
+        {
+            T r;
+
+            r.reserve(k * Polynomial::kSerializedByteCount);
+            for ( size_t i = 0; i < k; ++i ) // TODO: use foreach
+            {
+                const auto poly = vec[i].tobytes<T>();
+                r.insert(r.end(), poly.begin(), poly.end());
+            }
+
+            return r;
+        }
+
+        /*************************************************
+        * Name:        polyvec_csubq
+        *
+        * Description: Applies conditional subtraction of q to each coefficient
+        *              of each element of a vector of polynomials
+        *              for details of conditional subtraction of q see comments in
+        *              reduce.c
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void csubq()
+        {
+          for (auto& p : vec) {
+                p.csubq();
+          }
+        }
+
+        /*************************************************
+        * Name:        polyvec_add
+        *
+        * Description: Add vectors of polynomials
+        *
+        * Arguments: - polyvec *r:       pointer to output vector of polynomials
+        *            - const polyvec *a: pointer to first input vector of polynomials
+        *            - const polyvec *b: pointer to second input vector of polynomials
+        **************************************************/
+        PolynomialVector& operator+=(const PolynomialVector &other)
+        {
+            for (size_t i = 0; i<vec.size(); ++i)
+                vec[i] += other.vec[i];
+            return *this;
+        }
+
+        /*************************************************
+        * Name:        polyvec_reduce
+        *
+        * Description: Applies Barrett reduction to each coefficient
+        *              of each element of a vector of polynomials
+        *              for details of the Barrett reduction see comments in reduce.c
+        *
+        * Arguments:   - poly *r: pointer to input/output polynomial
+        **************************************************/
+        void reduce()
+        {
+            for (auto &v : vec)
+                v.reduce();
+        }
+    };
+
     using namespace Botan;
     class Kyber_Internal_Operation final
     {
@@ -347,10 +450,10 @@ namespace
         //     std::array<int16_t, 256> coeffs; // coeffs[m_N]
         // };
 
-        struct polyvec {
-            // TODO Use m_k
-            std::array<Polynomial, 4> vec; // vec[m_k] , use std::vector instead
-        };
+        // struct polyvec {
+        //     // TODO Use m_k
+        //     std::array<Polynomial, 4> vec; // vec[m_k] , use std::vector instead
+        // };
 
 
         /*************************************************
@@ -407,48 +510,6 @@ namespace
         }
 
 
-        /*************************************************
-        * Name:        polyvec_tobytes
-        *
-        * Description: Serialize vector of polynomials
-        *
-        * Arguments:   - std::vector<uint8_t> *r: pointer to output byte array
-        *                            (needs space for KYBER_POLYVECBYTES)
-        *              - polyvec *a: pointer to input vector of polynomials
-        *              TO DO XXX
-        **************************************************/
-        template <typename T = std::vector<uint8_t>>
-        T polyvec_tobytes(polyvec* a )
-        {
-            T r;
-
-            r.reserve(get_k() * get_poly_bytes());
-            for ( size_t i = 0; i < get_k(); ++i )
-            {
-                const auto poly_asbytes = a->vec[i].tobytes<T>();
-                r.insert(r.end(), poly_asbytes.begin(), poly_asbytes.end());
-            }
-
-            return r;
-        }
-
-
-        /*************************************************
-        * Name:        polyvec_csubq
-        *
-        * Description: Applies conditional subtraction of q to each coefficient
-        *              of each element of a vector of polynomials
-        *              for details of conditional subtraction of q see comments in
-        *              reduce.c
-        *
-        * Arguments:   - poly *r: pointer to input/output polynomial
-        **************************************************/
-        void polyvec_csubq(polyvec *r)
-        {
-          for (auto& p : r->vec) {
-                p.csubq();
-          }
-        }
 
 
         /*************************************************
@@ -460,13 +521,13 @@ namespace
         *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
         *              - polyvec *a: pointer to input vector of polynomials
         **************************************************/
-        secure_vector<uint8_t> polyvec_compress( polyvec* a )
+        secure_vector<uint8_t> polyvec_compress( PolynomialVector* a )
         {
             secure_vector<uint8_t> r(m_poly_vec_compressed_bytes);
 
             size_t i, j, k;
 
-            polyvec_csubq( a );
+            a->csubq();
 
             if ( m_k == 4 )
             {
@@ -531,9 +592,9 @@ namespace
         *              - const uint8_t *a: pointer to input byte array
         *                                  (of length KYBER_POLYVECCOMPRESSEDBYTES)
         **************************************************/
-        polyvec polyvec_decompress( const uint8_t* a, size_t a_len )
+        PolynomialVector polyvec_decompress( const uint8_t* a, size_t a_len )
         {
-            polyvec r;
+            PolynomialVector r;
             unsigned int i, j, k;
 
             if( a_len == m_k * 352 + m_poly_compressed_bytes )
@@ -586,26 +647,6 @@ namespace
 
 
         /*************************************************
-        * Name:        polyvec_frombytes
-        *
-        * Description: De-serialize vector of polynomials;
-        *              inverse of polyvec_tobytes
-        *
-        * Arguments:   - uint8_t *r:       pointer to output byte array
-        *              - const polyvec *a: pointer to input vector of polynomials
-        *                                  (of length KYBER_POLYVECBYTES)
-        *                                  TO DO XXX
-        **************************************************/
-        polyvec polyvec_frombytes( const std::vector<uint8_t> a )
-        {
-            polyvec r;
-            for ( size_t i = 0; i < get_k(); ++i )
-                r.vec[i] = Polynomial::frombytes( a, i * get_poly_bytes() );
-            return r;
-        }
-
-
-        /*************************************************
         * Name:        pack_ciphertext
         *
         * Description: Serialize the ciphertext as concatenation of the
@@ -616,7 +657,7 @@ namespace
         *              poly *pk:   pointer to the input vector of polynomials b
         *              poly *v:    pointer to the input polynomial v
         **************************************************/
-        secure_vector<uint8_t> pack_ciphertext( polyvec* b, Polynomial* v )
+        secure_vector<uint8_t> pack_ciphertext( PolynomialVector* b, Polynomial* v )
         {
             auto ct = polyvec_compress( b );
             auto p = poly_compress( v );
@@ -638,9 +679,9 @@ namespace
         *                                         polynomials (secret key)
         *              - const uint8_t *packedsk: pointer to input serialized secret key
         **************************************************/
-        polyvec unpack_sk( const std::vector<uint8_t> packedsk )
+        PolynomialVector unpack_sk( const std::vector<uint8_t> packedsk )
         {
-            return polyvec_frombytes( packedsk );
+            return PolynomialVector::frombytes( packedsk, m_k );
         }
 
 
@@ -657,45 +698,12 @@ namespace
         *              - const uint8_t *packedpk: pointer to input serialized public key
         *              TO DO XXX
         **************************************************/
-        polyvec unpack_pk( secure_vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
+        PolynomialVector unpack_pk( secure_vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
         {
-            auto pk = polyvec_frombytes( packedpk );
+            auto pk = PolynomialVector::frombytes( packedpk, m_k );
             for ( size_t i = 0; i < get_sym_bytes(); ++i )
                 seed[i] = packedpk[i + get_poly_vec_bytes()];
             return pk;
-        }
-
-        /*************************************************
-        * Name:        polyvec_add
-        *
-        * Description: Add vectors of polynomials
-        *
-        * Arguments: - polyvec *r:       pointer to output vector of polynomials
-        *            - const polyvec *a: pointer to first input vector of polynomials
-        *            - const polyvec *b: pointer to second input vector of polynomials
-        **************************************************/
-        void polyvec_add(polyvec *r, [[maybe_unused]] const polyvec *a, const polyvec *b)
-        {
-            // TODO: remove unused a when polyvec has +=  --  r =+ b
-            unsigned int i;
-            for (i = 0;i<m_k;i++)
-                r->vec[i] += b->vec[i];
-        }
-
-        /*************************************************
-        * Name:        polyvec_reduce
-        *
-        * Description: Applies Barrett reduction to each coefficient
-        *              of each element of a vector of polynomials
-        *              for details of the Barrett reduction see comments in reduce.c
-        *
-        * Arguments:   - poly *r: pointer to input/output polynomial
-        **************************************************/
-        void polyvec_reduce(polyvec *r)
-        {
-            unsigned int i;
-            for (i = 0;i<m_k;i++)
-                r->vec[i].reduce();
         }
 
 
@@ -707,7 +715,7 @@ namespace
         *
         * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
         **************************************************/
-        void polyvec_invntt_tomont(polyvec *r)
+        void polyvec_invntt_tomont(PolynomialVector *r)
         {
             unsigned int i;
             for (i = 0;i<m_k;i++)
@@ -980,13 +988,13 @@ namespace
             unsigned int i;
             secure_vector<uint8_t> seed( get_sym_bytes() );
             uint8_t nonce = 0;
-            polyvec sp, ep, bp;
+            PolynomialVector sp, ep, bp;
             Polynomial v;
 
-            polyvec pkpv = unpack_pk( seed, pk );
+            PolynomialVector pkpv = unpack_pk( seed, pk );
             auto k = Polynomial::frommsg( m , m_sym_bytes );
             const auto kyber_k = get_k();
-            std::vector<polyvec> at( kyber_k );
+            std::vector<PolynomialVector> at( kyber_k );
             gen_matrix( at, seed, 1 );
 
 
@@ -1007,10 +1015,10 @@ namespace
             polyvec_invntt_tomont( &bp );
             v.invntt_tomont();
 
-            polyvec_add( &bp, &bp, &ep );
+            bp += ep;
             v += epp;
             v += k;
-            polyvec_reduce( &bp );
+            bp.reduce();
             v.reduce();
 
             return pack_ciphertext( &bp, &v );
@@ -1072,7 +1080,7 @@ namespace
         *              - poly *v:          pointer to the output polynomial v
         *              - const uint8_t *c: pointer to the input serialized ciphertext
         **************************************************/
-        polyvec unpack_ciphertext( Polynomial* v, const uint8_t* c, size_t c_len )
+        PolynomialVector unpack_ciphertext( Polynomial* v, const uint8_t* c, size_t c_len )
         {
             auto b = polyvec_decompress( c, c_len );
             poly_decompress( v, c + m_poly_vec_compressed_bytes, m_poly_compressed_bytes);
@@ -1087,7 +1095,7 @@ namespace
         *
         * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
         **************************************************/
-        void polyvec_ntt(polyvec *r)
+        void polyvec_ntt(PolynomialVector *r)
         {
             unsigned int i;
             for (i = 0;i<m_k;i++)
@@ -1148,8 +1156,8 @@ namespace
         *            - const polyvec *b: pointer to second input vector of polynomials
         **************************************************/
         void polyvec_pointwise_acc_montgomery(Polynomial *r,
-            const polyvec *a,
-            const polyvec *b)
+            const PolynomialVector *a,
+            const PolynomialVector *b)
         {
             unsigned int i;
             Polynomial t;
@@ -1216,8 +1224,8 @@ namespace
             byte rand[rand_size];
             uint8_t nonce = 0;
             const auto kyber_k = kyberIntOps.get_k();
-            std::vector<polyvec> a( kyber_k );
-            polyvec e, pkpv, skpv;
+            std::vector<PolynomialVector> a( kyber_k );
+            PolynomialVector e, pkpv, skpv;
 
             rng.randomize( rand, rand_size );
             std::unique_ptr<HashFunction> hash3( HashFunction::create( "SHA-3(512)" ) );
@@ -1240,11 +1248,11 @@ namespace
                 pkpv.vec[i].tomont();
             }
 
-            polyvec_add( &pkpv, &pkpv, &e );
-            polyvec_reduce( &pkpv );
+            pkpv += e;
+            pkpv.reduce();
 
-            auto isk = polyvec_tobytes<secure_vector<uint8_t>>(&skpv);
-            auto ipk = polyvec_tobytes<std::vector<uint8_t>>(&pkpv);
+            auto isk = skpv.tobytes<secure_vector<uint8_t>>(m_k);
+            auto ipk = pkpv.tobytes<std::vector<uint8_t>>(m_k);
             ipk.insert(ipk.end(), seed.begin(), seed.begin() + kyberIntOps.get_sym_bytes());
 
             return {ipk, isk};
@@ -1362,7 +1370,7 @@ namespace
     *              - int transposed:            boolean deciding whether A or A^T
     *                                           is generated
     **************************************************/
-    void gen_matrix(std::vector<polyvec>& a, const secure_vector<uint8_t>& seed, int transposed)
+    void gen_matrix(std::vector<PolynomialVector>& a, const secure_vector<uint8_t>& seed, int transposed)
     {
         if( !m_kyber_90s )
         {
@@ -1377,7 +1385,7 @@ namespace
     private:
         // normal mode, not 90s
         // We instantiate XOF with SHAKE-128
-        void gen_matrix_normal( std::vector<polyvec>& a, const secure_vector<uint8_t>& seed, int transposed )
+        void gen_matrix_normal( std::vector<PolynomialVector>& a, const secure_vector<uint8_t>& seed, int transposed )
         {
             unsigned int ctr, i, j, k;
             unsigned int buflen, off;
@@ -1436,7 +1444,7 @@ namespace
         // 90s mode
         // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
         // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
-        void gen_matrix_90s( std::vector<polyvec>& a, const secure_vector<uint8_t>& seed, int transposed )
+        void gen_matrix_90s( std::vector<PolynomialVector>& a, const secure_vector<uint8_t>& seed, int transposed )
         {
             unsigned int ctr, i, j, k;
             unsigned int buflen, off;
