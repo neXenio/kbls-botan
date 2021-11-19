@@ -437,6 +437,33 @@ namespace
             for (auto &v : vec)
                 v.reduce();
         }
+
+        /*************************************************
+        * Name:        polyvec_invntt_tomont
+        *
+        * Description: Apply inverse NTT to all elements of a vector of polynomials
+        *              and multiply by Montgomery factor 2^16
+        *
+        * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
+        **************************************************/
+        void invntt_tomont()
+        {
+            for (auto &v : vec)
+                v.invntt_tomont();
+        }
+
+        /*************************************************
+        * Name:        polyvec_ntt
+        *
+        * Description: Apply forward NTT to all elements of a vector of polynomials
+        *
+        * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
+        **************************************************/
+        void ntt()
+        {
+            for (auto &v : vec)
+                v.ntt();
+        }
     };
 
     using namespace Botan;
@@ -704,22 +731,6 @@ namespace
             for ( size_t i = 0; i < get_sym_bytes(); ++i )
                 seed[i] = packedpk[i + get_poly_vec_bytes()];
             return pk;
-        }
-
-
-        /*************************************************
-        * Name:        polyvec_invntt_tomont
-        *
-        * Description: Apply inverse NTT to all elements of a vector of polynomials
-        *              and multiply by Montgomery factor 2^16
-        *
-        * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
-        **************************************************/
-        void polyvec_invntt_tomont(PolynomialVector *r)
-        {
-            unsigned int i;
-            for (i = 0;i<m_k;i++)
-                r->vec[i].invntt_tomont();
         }
 
 
@@ -1004,7 +1015,7 @@ namespace
                 ep.vec[i] = poly_getnoise_eta2( coins, nonce++ );
             auto epp = poly_getnoise_eta2( coins, nonce++ );
 
-            polyvec_ntt( &sp );
+            sp.ntt();
 
             // matrix-vector multiplication
             for ( i = 0; i < m_k; i++ )
@@ -1012,7 +1023,7 @@ namespace
 
             polyvec_pointwise_acc_montgomery( &v, &pkpv, &sp );
 
-            polyvec_invntt_tomont( &bp );
+            bp.invntt_tomont();
             v.invntt_tomont();
 
             bp += ep;
@@ -1086,20 +1097,6 @@ namespace
             poly_decompress( v, c + m_poly_vec_compressed_bytes, m_poly_compressed_bytes);
 
             return b;
-        }
-
-        /*************************************************
-        * Name:        polyvec_ntt
-        *
-        * Description: Apply forward NTT to all elements of a vector of polynomials
-        *
-        * Arguments:   - polyvec *r: pointer to in/output vector of polynomials
-        **************************************************/
-        void polyvec_ntt(PolynomialVector *r)
-        {
-            unsigned int i;
-            for (i = 0;i<m_k;i++)
-                r->vec[i].ntt();
         }
 
         /*************************************************
@@ -1193,7 +1190,7 @@ namespace
             auto bp = unpack_ciphertext( &v, c, c_len );
             auto skpv = unpack_sk( sk );
 
-            polyvec_ntt( &bp );
+            bp.ntt();
             polyvec_pointwise_acc_montgomery( &mp, &skpv, &bp );
             mp.invntt_tomont();
 
@@ -1239,8 +1236,8 @@ namespace
             for ( i = 0; i < kyber_k; i++ )
                 e.vec[i] = poly_getnoise_eta1( seed.data() + 32, nonce++ );
 
-            polyvec_ntt( &skpv );
-            polyvec_ntt( &e );
+            skpv.ntt();
+            e.ntt();
 
             // matrix-vector multiplication
             for ( i = 0; i < kyber_k; i++ ) {
