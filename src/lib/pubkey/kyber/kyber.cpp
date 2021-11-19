@@ -113,38 +113,6 @@ namespace
             return a - t;
         }
 
-        /*************************************************
-        * Name:        invntt_tomont
-        *
-        * Description: Inplace inverse number-theoretic transform in Rq and
-        *              multiplication by Montgomery factor 2^16.
-        *              Input is in bitreversed order, output is in standard order
-        *
-        * Arguments:   - int16_t r[256]: pointer to input/output vector of elements
-        *                                of Zq
-        **************************************************/
-        void invntt(int16_t r[256]) {
-            unsigned int start, len, j, k;
-            int16_t t, zeta;
-
-            k = 0;
-            for (len = 2; len <= 128; len <<= 1) {
-                for (start = 0; start < 256; start = j + len) {
-                    zeta = zetas_inv[k++];
-                    for (j = start; j < start + len; ++j) {
-                        t = r[j];
-                        r[j] = barrett_reduce(t + r[j + len]);
-                        r[j + len] = t - r[j + len];
-                        r[j + len] = fqmul(zeta, r[j + len]);
-                    }
-                }
-            }
-
-            for (j = 0; j < 256; ++j)
-                r[j] = fqmul(r[j], zetas_inv[127]);
-        }
-
-
     class Polynomial {
       public:
         std::array<int16_t, N> coeffs;
@@ -290,8 +258,56 @@ namespace
               c = montgomery_reduce((int32_t)c * f);
         }
 
+        /*************************************************
+        * Name:        poly_ntt
+        *
+        * Description: Computes negacyclic number-theoretic transform (NTT) of
+        *              a polynomial in place;
+        *              inputs assumed to be in normal order, output in bitreversed order
+        *
+        * Arguments:   - uint16_t *r: pointer to in/output polynomial
+        **************************************************/
+        void ntt()
+        {
+            for (size_t len = coeffs.size()/2, k = 0; len >= 2; len /= 2) {
+                for (size_t start = 0, j = 0; start < coeffs.size(); start = j + len) {
+                    const auto zeta = zetas[++k];
+                    for (j = start; j < start + len; ++j) {
+                        const auto t = fqmul(zeta, coeffs[j + len]);
+                        coeffs[j + len] = coeffs[j] - t;
+                        coeffs[j] = coeffs[j] + t;
+                    }
+                }
+            }
 
+            reduce();
+        }
 
+        /*************************************************
+        * Name:        poly_invntt_tomont
+        *
+        * Description: Computes inverse of negacyclic number-theoretic transform (NTT)
+        *              of a polynomial in place;
+        *              inputs assumed to be in bitreversed order, output in normal order
+        *
+        * Arguments:   - uint16_t *a: pointer to in/output polynomial
+        **************************************************/
+        void invntt_tomont()
+        {
+            for (size_t len = 2, k = 0; len <= coeffs.size()/2; len *= 2) {
+                for (size_t start = 0, j = 0; start < coeffs.size(); start = j + len) {
+                    const auto zeta = zetas_inv[k++];
+                    for (j = start; j < start + len; ++j) {
+                        const auto t = coeffs[j];
+                        coeffs[j] = barrett_reduce(t + coeffs[j + len]);
+                        coeffs[j + len] = fqmul(zeta, t - coeffs[j + len]);
+                    }
+                }
+            }
+
+            for (auto &c : coeffs)
+                c = fqmul(c, zetas_inv[127]);
+        }
     };
 
     using namespace Botan;
@@ -669,7 +685,7 @@ namespace
         {
             unsigned int i;
             for (i = 0;i<m_k;i++)
-                poly_invntt_tomont(&r->vec[i]);
+                r->vec[i].invntt_tomont();
         }
 
 
@@ -991,7 +1007,7 @@ namespace
             polyvec_pointwise_acc_montgomery( &v, &pkpv, &sp );
 
             polyvec_invntt_tomont( &bp );
-            poly_invntt_tomont( &v );
+            v.invntt_tomont();
 
             polyvec_add( &bp, &bp, &ep );
             v += epp;
@@ -1001,22 +1017,6 @@ namespace
 
             return pack_ciphertext( &bp, &v );
         }
-
-        /*************************************************
-        * Name:        poly_ntt
-        *
-        * Description: Computes negacyclic number-theoretic transform (NTT) of
-        *              a polynomial in place;
-        *              inputs assumed to be in normal order, output in bitreversed order
-        *
-        * Arguments:   - uint16_t *r: pointer to in/output polynomial
-        **************************************************/
-        void poly_ntt(Polynomial *r)
-        {
-            ntt(r->coeffs.data());
-            r->reduce();
-        }
-
 
         /*************************************************
         * Name:        poly_decompress
@@ -1093,7 +1093,7 @@ namespace
         {
             unsigned int i;
             for (i = 0;i<m_k;i++)
-                poly_ntt(&r->vec[i]);
+                r->vec[i].ntt();
         }
 
         /*************************************************
@@ -1166,48 +1166,6 @@ namespace
         }
 
         /*************************************************
-        * Name:        poly_invntt_tomont
-        *
-        * Description: Computes inverse of negacyclic number-theoretic transform (NTT)
-        *              of a polynomial in place;
-        *              inputs assumed to be in bitreversed order, output in normal order
-        *
-        * Arguments:   - uint16_t *a: pointer to in/output polynomial
-        **************************************************/
-        void poly_invntt_tomont(Polynomial *r)
-        {
-            invntt(r->coeffs.data());
-        }
-
-
-        /*************************************************
-        * Name:        ntt
-        *
-        * Description: Inplace number-theoretic transform (NTT) in Rq
-        *              input is in standard order, output is in bitreversed order
-        *
-        * Arguments:   - int16_t r[256]: pointer to input/output vector of elements
-        *                                of Zq
-        **************************************************/
-        void ntt(int16_t r[256]) {
-            unsigned int len, start, j, k;
-            int16_t t, zeta;
-
-            k = 1;
-            for (len = 128; len >= 2; len >>= 1) {
-                for (start = 0; start < 256; start = j + len) {
-                    zeta = zetas[k++];
-                    for (j = start; j < start + len; ++j) {
-                        t = fqmul(zeta, r[j + len]);
-                        r[j + len] = r[j] - t;
-                        r[j] = r[j] + t;
-                    }
-                }
-            }
-        }
-
-
-        /*************************************************
         * Name:        indcpa_dec
         *
         * Description: Decryption function of the CPA-secure
@@ -1231,7 +1189,7 @@ namespace
 
             polyvec_ntt( &bp );
             polyvec_pointwise_acc_montgomery( &mp, &skpv, &bp );
-            poly_invntt_tomont( &mp );
+            mp.invntt_tomont();
 
             mp -= v;
             mp.reduce();
