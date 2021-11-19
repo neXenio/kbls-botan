@@ -1084,10 +1084,7 @@ namespace
 
             PolynomialVector pkpv = unpack_pk( seed, pk );
             auto k = Polynomial::frommsg( m , m_sym_bytes );
-            const auto kyber_k = get_k();
-            std::vector<PolynomialVector> at( kyber_k, PolynomialVector(m_k) );
-            gen_matrix( at, seed, 1 );
-
+            auto at = gen_matrix(seed, true);
 
             for ( i = 0; i < m_k; i++ )
                 sp.vec[i] = poly_getnoise_eta1( coins, nonce++ );
@@ -1232,7 +1229,6 @@ namespace
             byte rand[rand_size];
             uint8_t nonce = 0;
             const auto kyber_k = kyberIntOps.get_k();
-            std::vector<PolynomialVector> a( kyber_k, PolynomialVector(m_k) );
             PolynomialVector e(m_k);
             PolynomialVector pkpv(m_k);
             PolynomialVector skpv(m_k);
@@ -1242,7 +1238,7 @@ namespace
             hash3->update( rand, rand_size );
             auto seed = hash3->final();
 
-            kyberIntOps.gen_matrix( a, seed, 0 );
+            auto a = kyberIntOps.gen_matrix(seed, false);
 
             for ( i = 0; i < kyber_k; i++ )
                 skpv.vec[i] = poly_getnoise_eta1( seed.data() + 32, nonce++ );
@@ -1380,23 +1376,19 @@ namespace
     *              - int transposed:            boolean deciding whether A or A^T
     *                                           is generated
     **************************************************/
-    void gen_matrix(std::vector<PolynomialVector>& a, const secure_vector<uint8_t>& seed, int transposed)
+    std::vector<PolynomialVector> gen_matrix(const secure_vector<uint8_t>& seed, const bool transposed)
     {
-        if( !m_kyber_90s )
-        {
-            gen_matrix_normal( a, seed, transposed );
-        }
-        else
-        {
-            gen_matrix_90s( a, seed, transposed );
-        }
+        return (m_kyber_90s) ? gen_matrix_90s(seed, transposed)
+                             : gen_matrix_normal(seed, transposed);
     }
 
     private:
         // normal mode, not 90s
         // We instantiate XOF with SHAKE-128
-        void gen_matrix_normal( std::vector<PolynomialVector>& a, const secure_vector<uint8_t>& seed, int transposed )
+        std::vector<PolynomialVector> gen_matrix_normal(const secure_vector<uint8_t>& seed, const bool transposed)
         {
+            std::vector<PolynomialVector> a(m_k, PolynomialVector(m_k));
+
             unsigned int ctr, i, j, k;
             unsigned int buflen, off;
 
@@ -1449,13 +1441,17 @@ namespace
                     }
                 }
             }
+
+            return a;
         }
 
         // 90s mode
         // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
         // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
-        void gen_matrix_90s( std::vector<PolynomialVector>& a, const secure_vector<uint8_t>& seed, int transposed )
+        std::vector<PolynomialVector> gen_matrix_90s(const secure_vector<uint8_t>& seed, const bool transposed)
         {
+            std::vector<PolynomialVector> a(m_k, PolynomialVector(m_k));
+
             unsigned int ctr, i, j, k;
             unsigned int buflen, off;
 
@@ -1508,6 +1504,8 @@ namespace
                     }
                 }
             }
+
+            return a;
         }
 
         constexpr static size_t m_N = 256;
