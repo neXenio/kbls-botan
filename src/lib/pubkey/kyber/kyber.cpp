@@ -182,9 +182,9 @@ namespace
         **************************************************/
         void polyvec_csubq(polyvec *r)
         {
-            unsigned int i;
-            for (i = 0;i<m_k;i++)
-                poly_csubq(&r->vec[i]);
+          for (auto& p : r->vec) {
+                poly_csubq(&p);
+          }
         }
 
 
@@ -268,9 +268,9 @@ namespace
         *              - const uint8_t *a: pointer to input byte array
         *                                  (of length KYBER_POLYVECCOMPRESSEDBYTES)
         **************************************************/
-        void polyvec_decompress( polyvec* r,
-            const uint8_t* a, size_t a_len )
+        polyvec polyvec_decompress( const uint8_t* a, size_t a_len )
         {
+            polyvec r;
             unsigned int i, j, k;
 
             if( a_len == m_k * 352 + m_poly_compressed_bytes )
@@ -289,9 +289,11 @@ namespace
                         a += 11;
 
                         for ( k = 0; k < 8; k++ )
-                            r->vec[i].coeffs[8 * j + k] = ( (uint32_t)( t[k] & 0x7FF ) * m_Q + 1024 ) >> 11;
+                            r.vec[i].coeffs[8 * j + k] = ( (uint32_t)( t[k] & 0x7FF ) * m_Q + 1024 ) >> 11;
                     }
                 }
+
+                return r;
             }
             else if( a_len == m_k * 320 + m_poly_compressed_bytes )
             {
@@ -305,9 +307,11 @@ namespace
                         a += 5;
 
                         for ( k = 0; k < 4; k++ )
-                            r->vec[i].coeffs[4 * j + k] = ( (uint32_t)( t[k] & 0x3FF ) * m_Q + 512 ) >> 10;
+                            r.vec[i].coeffs[4 * j + k] = ( (uint32_t)( t[k] & 0x3FF ) * m_Q + 512 ) >> 10;
                     }
                 }
+
+                return r;
             }
             else
             {
@@ -327,13 +331,15 @@ namespace
         *                                  (of KYBER_POLYBYTES bytes)
         *                                  TO DO XXX
         **************************************************/
-        void poly_frombytes( poly* r, const std::vector<uint8_t> a, size_t offset )
+        poly poly_frombytes( const std::vector<uint8_t> a, size_t offset )
         {
+            poly r;
             for ( size_t i = 0; i < get_n() / 2; i++ )
             {
-                r->coeffs[2 * i] = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
-                r->coeffs[2 * i + 1] = ( ( a[3 * i + 1 + offset] >> 4 ) | ( (uint16_t)a[3 * i + 2 + offset] << 4 ) ) & 0xFFF;
+                r.coeffs[2 * i] = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
+                r.coeffs[2 * i + 1] = ( ( a[3 * i + 1 + offset] >> 4 ) | ( (uint16_t)a[3 * i + 2 + offset] << 4 ) ) & 0xFFF;
             }
+            return r;
         }
 
 
@@ -349,10 +355,12 @@ namespace
         *                                  (of length KYBER_POLYVECBYTES)
         *                                  TO DO XXX
         **************************************************/
-        void polyvec_frombytes( polyvec* r, const std::vector<uint8_t> a )
+        polyvec polyvec_frombytes( const std::vector<uint8_t> a )
         {
+            polyvec r;
             for ( size_t i = 0; i < get_k(); i++ )
-                poly_frombytes( &r->vec[i], a, i * get_poly_bytes() );
+                r.vec[i] = poly_frombytes( a, i * get_poly_bytes() );
+            return r;
         }
 
 
@@ -389,10 +397,9 @@ namespace
         *                                         polynomials (secret key)
         *              - const uint8_t *packedsk: pointer to input serialized secret key
         **************************************************/
-        void unpack_sk( polyvec* sk,
-            const std::vector<uint8_t> packedsk )
+        polyvec unpack_sk( const std::vector<uint8_t> packedsk )
         {
-            polyvec_frombytes( sk, packedsk );
+            return polyvec_frombytes( packedsk );
         }
 
 
@@ -409,13 +416,12 @@ namespace
         *              - const uint8_t *packedpk: pointer to input serialized public key
         *              TO DO XXX
         **************************************************/
-        void unpack_pk( polyvec* pk,
-            secure_vector<uint8_t>& seed,
-            const std::vector<uint8_t>& packedpk )
+        polyvec unpack_pk( secure_vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
         {
-            polyvec_frombytes( pk, packedpk );
+            auto pk = polyvec_frombytes( packedpk );
             for ( size_t i = 0; i < get_sym_bytes(); i++ )
                 seed[i] = packedpk[i + get_poly_vec_bytes()];
+            return pk;
         }
 
 
@@ -612,8 +618,9 @@ namespace
         * Arguments:   - poly *r:                            pointer to output polynomial
         *              - const secure_vector<uint8_t>& buf: pointer to input byte array
         **************************************************/
-        void cbd2(poly *r, const secure_vector<uint8_t>& buf)
+        poly cbd2(const secure_vector<uint8_t>& buf)
         {
+            poly r;
             if (buf.size() < (2 * m_N / 4))
             {
                 throw std::runtime_error("Cannot cbd2 because buf incompatible buffer length!");
@@ -627,9 +634,10 @@ namespace
                 for (unsigned int j = 0;j<8;j++) {
                     int16_t a = (d >> (4 * j + 0)) & 0x3;
                     int16_t b = (d >> (4 * j + 2)) & 0x3;
-                    r->coeffs[8 * i + j] = a - b;
+                    r.coeffs[8 * i + j] = a - b;
                 }
             }
+            return r;
         }
 
         /*************************************************
@@ -643,9 +651,9 @@ namespace
         * Arguments:   - poly *r:            pointer to output polynomial
         *              - const uint8_t *buf: pointer to input byte array
         **************************************************/
-        void cbd3(poly *r, const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
+        poly cbd3(const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
         {
-
+            poly r;
             if (buf.size() < (3 * m_N / 4))
             {
                 throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
@@ -659,13 +667,14 @@ namespace
                 for (unsigned int j = 0;j<4;j++) {
                     int16_t a = (d >> (6 * j + 0)) & 0x7;
                     int16_t b = (d >> (6 * j + 3)) & 0x7;
-                    r->coeffs[4 * i + j] = a - b;
+                    r.coeffs[4 * i + j] = a - b;
                 }
             }
+            return r;
         }
 
 
-    void cbd_eta1(poly *r, const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
+    poly cbd_eta1(const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
     {
         if (buf.size() < (m_KYBER_ETA1*m_N / 4))
         {
@@ -673,11 +682,11 @@ namespace
         }
         if (m_KYBER_ETA1 == 2)
         {
-            cbd2(r, buf);
+            return cbd2(buf);
         }
         else if (m_KYBER_ETA1 == 3)
         {
-            cbd3(r, buf);
+            return cbd3(buf);
         }
         else
         {
@@ -685,7 +694,7 @@ namespace
         }
     }
 
-    void cbd_eta2(poly *r, const secure_vector<uint8_t>& buf )
+    poly cbd_eta2( const secure_vector<uint8_t>& buf )
     {
         if (buf.size() < (m_KYBER_ETA2*m_N / 4))
         {
@@ -696,7 +705,7 @@ namespace
             std::runtime_error("This implementation requires eta2 = 2");
         }
 
-        cbd2(r, buf);
+        return cbd2(buf);
     }
 
         /*************************************************
@@ -707,8 +716,10 @@ namespace
         * Arguments:   - poly *r:            pointer to output polynomial
         *              - const uint8_t *msg: pointer to input message
         **************************************************/
-    void poly_frommsg(poly *r, const uint8_t msg[], size_t msgLength)
+    poly poly_frommsg( const uint8_t msg[], size_t msgLength)
     {
+        poly r;
+
         unsigned int i, j;
         int16_t mask;
 
@@ -720,10 +731,11 @@ namespace
             for (i = 0;i<m_N / 8;i++) {
                 for (j = 0;j<8;j++) {
                     mask = -(int16_t)((msg[i] >> j) & 1);
-                    r->coeffs[8 * i + j] = mask & ((m_Q + 1) / 2);
+                    r.coeffs[8 * i + j] = mask & ((m_Q + 1) / 2);
                 }
             }
-        }
+        return r;
+      }
 
         /*************************************************
         * Name:        poly_getnoise_eta2
@@ -737,11 +749,11 @@ namespace
         *                                     (of length KYBER_SYMBYTES bytes)
         *              - uint8_t nonce:       one-byte input nonce
         **************************************************/
-        void poly_getnoise_eta2(poly *r, const uint8_t seed[32], uint8_t nonce)
+        poly poly_getnoise_eta2(const uint8_t seed[32], uint8_t nonce)
         {
             auto buf = prf( seed, nonce);
 
-            cbd_eta2(r, buf);
+            return cbd_eta2(buf);
         }
 
         /*************************************************
@@ -756,11 +768,11 @@ namespace
         *                                     (of length KYBER_SYMBYTES bytes)
         *              - uint8_t nonce:       one-byte input nonce
         **************************************************/
-        void poly_getnoise_eta1(poly *r, const uint8_t seed[32], uint8_t nonce)
+        poly poly_getnoise_eta1(const uint8_t seed[32], uint8_t nonce)
         {
             auto buf = prf(seed, nonce);
 
-            cbd_eta1(r, buf);
+            return cbd_eta1(buf);
         }
 
         /*************************************************
@@ -789,20 +801,21 @@ namespace
             unsigned int i;
             secure_vector<uint8_t> seed( get_sym_bytes() );
             uint8_t nonce = 0;
-            polyvec sp, pkpv, ep, bp;
-            poly v, k, epp;
+            polyvec sp, ep, bp;
+            poly v;
 
-            unpack_pk( &pkpv, seed, pk );
-            poly_frommsg( &k, m , m_sym_bytes );
+            polyvec pkpv = unpack_pk( seed, pk );
+            auto k = poly_frommsg( m , m_sym_bytes );
             const auto kyber_k = get_k();
             std::vector<polyvec> at( kyber_k );
             gen_matrix( at, seed, 1 );
 
+
             for ( i = 0; i < m_k; i++ )
-                poly_getnoise_eta1( sp.vec.data() + i, coins, nonce++ );
+                sp.vec[i] = poly_getnoise_eta1( coins, nonce++ );
             for ( i = 0; i < m_k; i++ )
-                poly_getnoise_eta2( ep.vec.data() + i, coins, nonce++ );
-            poly_getnoise_eta2( &epp, coins, nonce++ );
+                ep.vec[i] = poly_getnoise_eta2( coins, nonce++ );
+            auto epp = poly_getnoise_eta2( coins, nonce++ );
 
             polyvec_ntt( &sp );
 
@@ -896,12 +909,12 @@ namespace
         *              - poly *v:          pointer to the output polynomial v
         *              - const uint8_t *c: pointer to the input serialized ciphertext
         **************************************************/
-        void unpack_ciphertext( polyvec* b,
-            poly* v,
-            const uint8_t* c, size_t c_len )
+        polyvec unpack_ciphertext( poly* v, const uint8_t* c, size_t c_len )
         {
-            polyvec_decompress( b, c, c_len );
+            auto b = polyvec_decompress( c, c_len );
             poly_decompress( v, c + m_poly_vec_compressed_bytes, m_poly_compressed_bytes);
+
+            return b;
         }
 
         /*************************************************
@@ -1189,11 +1202,10 @@ namespace
             const uint8_t* c, size_t c_len,
             const std::vector<uint8_t>& sk )
         {
-            polyvec bp, skpv;
             poly v, mp;
 
-            unpack_ciphertext( &bp, &v, c, c_len );
-            unpack_sk( &skpv, sk );
+            auto bp = unpack_ciphertext( &v, c, c_len );
+            auto skpv = unpack_sk( sk );
 
             polyvec_ntt( &bp );
             polyvec_pointwise_acc_montgomery( &mp, &skpv, &bp );
@@ -1238,9 +1250,9 @@ namespace
             kyberIntOps.gen_matrix( a, seed, 0 );
 
             for ( i = 0; i < kyber_k; i++ )
-                poly_getnoise_eta1( &skpv.vec[i], seed.data() + 32, nonce++ );
+                skpv.vec[i] = poly_getnoise_eta1( seed.data() + 32, nonce++ );
             for ( i = 0; i < kyber_k; i++ )
-                poly_getnoise_eta1( &e.vec[i], seed.data() + 32, nonce++ );
+                e.vec[i] = poly_getnoise_eta1( seed.data() + 32, nonce++ );
 
             polyvec_ntt( &skpv );
             polyvec_ntt( &e );
