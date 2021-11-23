@@ -7,6 +7,7 @@
 #include <botan/sha3.h>
 #include <botan/shake.h>
 #include <botan/stream_cipher.h>
+#include <botan/loadstor.h>
 
 #include <array>
 
@@ -187,6 +188,79 @@ namespace
                 r[3 * i + 2] = ( t1 >> 4 );
             }
 
+            return r;
+        }
+
+
+        /*************************************************
+        * Name:        cbd2
+        *
+        * Description: Given an array of uniformly random bytes, compute
+        *              polynomial with coefficients distributed according to
+        *              a centered binomial distribution with parameter eta=2
+        *
+        * Arguments:   - poly *r:                            pointer to output polynomial
+        *              - const secure_vector<uint8_t>& buf: pointer to input byte array
+        **************************************************/
+        template <typename Alloc>
+        static Polynomial cbd2(const std::vector<uint8_t, Alloc>& buf)
+        {
+            Polynomial r;
+
+            if (buf.size() < (2 * r.coeffs.size() / 4))
+            {
+                throw Botan::Invalid_Argument("Cannot cbd2 because buf incompatible buffer length!");
+            }
+
+
+            for (size_t i = 0; i < r.coeffs.size() / 8; ++i) {
+                uint32_t t = Botan::load_le<uint32_t>(buf.data(), 4 * i);
+                uint32_t d = t & 0x55555555;
+                d += (t >> 1) & 0x55555555;
+
+                for (size_t j = 0; j < 8; ++j) {
+                    int16_t a = (d >> (4 * j + 0)) & 0x3;
+                    int16_t b = (d >> (4 * j + 2)) & 0x3;
+                    r.coeffs[8 * i + j] = a - b;
+                }
+            }
+
+            return r;
+        }
+
+        /*************************************************
+        * Name:        cbd3
+        *
+        * Description: Given an array of uniformly random bytes, compute
+        *              polynomial with coefficients distributed according to
+        *              a centered binomial distribution with parameter eta=3
+        *              This function is only needed for Kyber-512
+        *
+        * Arguments:   - poly *r:            pointer to output polynomial
+        *              - const uint8_t *buf: pointer to input byte array
+        **************************************************/
+        template <typename Alloc>
+        static Polynomial cbd3(const std::vector<uint8_t, Alloc>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
+        {
+            Polynomial r;
+
+            if (buf.size() < (3 * r.coeffs.size() / 4))
+            {
+                throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
+            }
+
+            for (size_t i = 0; i < r.coeffs.size() / 4; ++i) {
+                uint32_t t = load24_littleendian(buf.data() + 3 * i);
+                uint32_t d = t & 0x00249249;
+                d += (t >> 1) & 0x00249249;
+                d += (t >> 2) & 0x00249249;
+
+                for (size_t j = 0; j < 4; ++j) {
+                    int16_t a = (d >> (6 * j + 0)) & 0x7;
+                    int16_t b = (d >> (6 * j + 3)) & 0x7;
+                    r.coeffs[4 * i + j] = a - b;
+                }
+            }
             return r;
         }
 
@@ -912,70 +986,6 @@ namespace
         }
 
 
-        /*************************************************
-        * Name:        cbd2
-        *
-        * Description: Given an array of uniformly random bytes, compute
-        *              polynomial with coefficients distributed according to
-        *              a centered binomial distribution with parameter eta=2
-        *
-        * Arguments:   - poly *r:                            pointer to output polynomial
-        *              - const secure_vector<uint8_t>& buf: pointer to input byte array
-        **************************************************/
-        Polynomial cbd2(const secure_vector<uint8_t>& buf)
-        {
-            Polynomial r;
-            if (buf.size() < (2 * m_N / 4))
-            {
-                throw std::runtime_error("Cannot cbd2 because buf incompatible buffer length!");
-            }
-
-            for (unsigned int i = 0;i<m_N / 8;i++) {
-                uint32_t t = load32_littleendian(buf.data() + 4 * i);
-                uint32_t d = t & 0x55555555;
-                d += (t >> 1) & 0x55555555;
-
-                for (unsigned int j = 0;j<8;j++) {
-                    int16_t a = (d >> (4 * j + 0)) & 0x3;
-                    int16_t b = (d >> (4 * j + 2)) & 0x3;
-                    r.coeffs[8 * i + j] = a - b;
-                }
-            }
-            return r;
-        }
-
-        /*************************************************
-        * Name:        cbd3
-        *
-        * Description: Given an array of uniformly random bytes, compute
-        *              polynomial with coefficients distributed according to
-        *              a centered binomial distribution with parameter eta=3
-        *              This function is only needed for Kyber-512
-        *
-        * Arguments:   - poly *r:            pointer to output polynomial
-        *              - const uint8_t *buf: pointer to input byte array
-        **************************************************/
-        Polynomial cbd3(const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
-        {
-            Polynomial r;
-            if (buf.size() < (3 * m_N / 4))
-            {
-                throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
-            }
-            for (unsigned int i = 0;i<m_N / 4;i++) {
-                uint32_t t = load24_littleendian(buf.data() + 3 * i);
-                uint32_t d = t & 0x00249249;
-                d += (t >> 1) & 0x00249249;
-                d += (t >> 2) & 0x00249249;
-
-                for (unsigned int j = 0;j<4;j++) {
-                    int16_t a = (d >> (6 * j + 0)) & 0x7;
-                    int16_t b = (d >> (6 * j + 3)) & 0x7;
-                    r.coeffs[4 * i + j] = a - b;
-                }
-            }
-            return r;
-        }
 
 
     Polynomial cbd_eta1(const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
@@ -986,11 +996,11 @@ namespace
         }
         if (m_KYBER_ETA1 == 2)
         {
-            return cbd2(buf);
+            return Polynomial::cbd2(buf);
         }
         else if (m_KYBER_ETA1 == 3)
         {
-            return cbd3(buf);
+            return Polynomial::cbd3(buf);
         }
         else
         {
@@ -1009,7 +1019,7 @@ namespace
             std::runtime_error("This implementation requires eta2 = 2");
         }
 
-        return cbd2(buf);
+        return Polynomial::cbd2(buf);
     }
 
 
