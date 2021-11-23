@@ -214,7 +214,7 @@ namespace
 
 
             for (size_t i = 0; i < r.coeffs.size() / 8; ++i) {
-                uint32_t t = Botan::load_le<uint32_t>(buf.data(), 4 * i);
+                uint32_t t = Botan::load_le<uint32_t>(buf.data(), i);
                 uint32_t d = t & 0x55555555;
                 d += (t >> 1) & 0x55555555;
 
@@ -249,8 +249,14 @@ namespace
                 throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
             }
 
+            // Note: Botan::load_le<> does not support loading a 3-byte value
+            const auto load_le24 = [](const uint8_t in[], const size_t off) {
+                const auto off3 = off * 3;
+                return Botan::make_uint32(0, in[off3 + 2], in[off3 + 1], in[off3]);
+            };
+
             for (size_t i = 0; i < r.coeffs.size() / 4; ++i) {
-                uint32_t t = load24_littleendian(buf.data() + 3 * i);
+                uint32_t t = load_le24(buf.data(), i);
                 uint32_t d = t & 0x00249249;
                 d += (t >> 1) & 0x00249249;
                 d += (t >> 2) & 0x00249249;
@@ -942,49 +948,6 @@ namespace
                 return {};
             }
         }
-
-
-        /*************************************************
-        * Name:        load32_littleendian
-        *
-        * Description: load 4 bytes into a 32-bit integer
-        *              in little-endian order
-        *
-        * Arguments:   - const uint8_t *x: pointer to input byte array
-        *
-        * Returns 32-bit unsigned integer loaded from x
-        **************************************************/
-        uint32_t load32_littleendian(const uint8_t x[4])
-        {
-            uint32_t r;
-            r = (uint32_t)x[0];
-            r |= (uint32_t)x[1] << 8;
-            r |= (uint32_t)x[2] << 16;
-            r |= (uint32_t)x[3] << 24;
-            return r;
-        }
-
-        /*************************************************
-        * Name:        load24_littleendian
-        *
-        * Description: load 3 bytes into a 32-bit integer
-        *              in little-endian order
-        *              This function is only needed for Kyber-512
-        *
-        * Arguments:   - const uint8_t *x: pointer to input byte array
-        *
-        * Returns 32-bit unsigned integer loaded from x (most significant byte is zero)
-        **************************************************/
-
-        uint32_t load24_littleendian(const uint8_t x[3])
-        {
-            uint32_t r;
-            r = (uint32_t)x[0];
-            r |= (uint32_t)x[1] << 8;
-            r |= (uint32_t)x[2] << 16;
-            return r;
-        }
-
 
 
 
