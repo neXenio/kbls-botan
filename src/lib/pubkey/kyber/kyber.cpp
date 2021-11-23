@@ -42,6 +42,21 @@ namespace
         3127, 3042, 1907, 1836, 1517, 359, 758, 1441
     };
 
+
+    size_t k(const Botan::KyberMode mode) {
+        switch (mode) {
+        case Botan::KyberMode::Kyber512:
+        case Botan::KyberMode::Kyber512_90s:
+            return 2;
+        case Botan::KyberMode::Kyber768:
+        case Botan::KyberMode::Kyber768_90s:
+            return 3;
+        case Botan::KyberMode::Kyber1024:
+        case Botan::KyberMode::Kyber1024_90s:
+            return 4;
+        }
+    }
+
     /*************************************************
     * Name:        csubq
     *
@@ -1699,6 +1714,20 @@ namespace Botan
         const Kyber_PrivateKey& m_key;
     };
 
+    class Kyber_Public_Data {
+    public:
+        Kyber_Public_Data(PolynomialVector polynomials, std::vector<uint8_t> seed)
+            : m_polynomials(std::move(polynomials))
+            , m_seed(std::move(seed)) {}
+
+        PolynomialVector& polynomials() { return m_polynomials; }
+        std::vector<uint8_t>& seed() { return m_seed; }
+
+    private:
+        PolynomialVector     m_polynomials;
+        std::vector<uint8_t> m_seed;
+    };
+
     std::string Kyber_PublicKey::algo_name() const
     {
         return "kyber-r3";
@@ -1734,16 +1763,26 @@ namespace Botan
          }
     }
 
-    Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode ) :
-        m_kyber_mode( mode ), m_public_key( pub_key ) {}
+    Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode )
+        : m_kyber_mode( mode )
+        {
+            if (pub_key.size() != key_length()) {
+                throw Botan::Invalid_Argument("kyber public key does not have the correct byte count");
+            }
+
+            m_public = std::make_shared<Kyber_Public_Data>(
+                PolynomialVector::frombytes( pub_key, k(m_kyber_mode)),
+                std::vector<uint8_t>(pub_key.end() - kSeedLength, pub_key.end()));
+        }
 
     std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
     {
-        return m_public_key;
+        auto pub_key = m_public->polynomials().tobytes<std::vector<uint8_t>>(k(m_kyber_mode));
+        pub_key.insert(pub_key.end(), m_public->seed().begin(), m_public->seed().end());
+        return pub_key;
     }
 
-    size_t Kyber_PublicKey::key_length() const { return m_public_key.size(); }
-
+    size_t Kyber_PublicKey::key_length() const { return Polynomial::kSerializedByteCount * k(m_kyber_mode) + kSeedLength; }
     KyberMode Kyber_PublicKey::get_mode() const { return m_kyber_mode; }
 
     bool Kyber_PublicKey::check_key( RandomNumberGenerator& rng, bool ) const
