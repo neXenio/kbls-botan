@@ -949,43 +949,6 @@ namespace
             }
         }
 
-
-
-    Polynomial cbd_eta1(const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
-    {
-        if (buf.size() < (m_KYBER_ETA1*m_N / 4))
-        {
-            throw std::runtime_error("Cannot cbd_eta1 because incompatible buffer length!");
-        }
-        if (m_KYBER_ETA1 == 2)
-        {
-            return Polynomial::cbd2(buf);
-        }
-        else if (m_KYBER_ETA1 == 3)
-        {
-            return Polynomial::cbd3(buf);
-        }
-        else
-        {
-            throw std::runtime_error("This implementation requires eta1 in {2,3}");
-        }
-    }
-
-    Polynomial cbd_eta2( const secure_vector<uint8_t>& buf )
-    {
-        if (buf.size() < (m_KYBER_ETA2*m_N / 4))
-        {
-            throw std::runtime_error("Cannot cbd_eta2 because incompatible buffer length!");
-        }
-        if (m_KYBER_ETA2 != 2)
-        {
-            std::runtime_error("This implementation requires eta2 = 2");
-        }
-
-        return Polynomial::cbd2(buf);
-    }
-
-
         /*************************************************
         * Name:        poly_getnoise_eta2
         *
@@ -1002,7 +965,7 @@ namespace
         {
             auto buf = prf( seed, nonce);
 
-            return cbd_eta2(buf);
+            return Polynomial::cbd2(buf);
         }
 
         /*************************************************
@@ -1021,7 +984,14 @@ namespace
         {
             auto buf = prf(seed, nonce);
 
-            return cbd_eta1(buf);
+            if (m_KYBER_ETA1 == 2)
+            {
+                return Polynomial::cbd2(buf);
+            }
+            else if (m_KYBER_ETA1 == 3)
+            {
+                return Polynomial::cbd3(buf);
+            }
         }
 
         /*************************************************
