@@ -22,8 +22,13 @@ namespace Botan {
         Kyber1024_90s
     };
 
+    class Kyber_Public_Data;
+
     class BOTAN_PUBLIC_API(2, 0) Kyber_PublicKey : public virtual Public_Key
     {
+    protected:
+        static constexpr size_t kSeedLength = 32;
+
     public:
 
         Kyber_PublicKey( const std::vector<uint8_t>&pub_key, KyberMode mode );
@@ -54,9 +59,10 @@ namespace Botan {
                                     const std::string& provider) const override;
 
     protected:
-        Kyber_PublicKey() {}
+        Kyber_PublicKey() = default;
+
         KyberMode m_kyber_mode;
-        std::vector<uint8_t> m_public_key;
+        std::shared_ptr<Kyber_Public_Data> m_public;
     };
 
 
