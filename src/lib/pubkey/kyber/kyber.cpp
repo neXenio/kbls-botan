@@ -240,6 +240,58 @@ namespace
             }
         }
 
+        /*************************************************
+        * Name:        poly_compress
+        *
+        * Description: Compression and subsequent serialization of a polynomial
+        *
+        * Arguments:   - uint8_t *r: pointer to output byte array
+        *                            (of length KYBER_POLYCOMPRESSEDBYTES)
+        *              - poly *a:    pointer to input polynomial
+        **************************************************/
+        Botan::secure_vector<uint8_t> compress(const size_t k)
+        {
+            BOTAN_ASSERT(k == 2 || k == 3 || k == 4, "k should be one of {2,3,4}");
+
+            const size_t compressed_bytes = (k == 2 || k == 3) ? 128 : 160;
+            Botan::secure_vector<uint8_t> r(compressed_bytes);
+
+            csubq();
+
+            uint8_t t[8];
+            if( k == 2 || k == 3 )
+            {
+                size_t offset = 0;
+                for ( size_t i = 0; i < coeffs.size() / 8; ++i ) {
+                    for ( size_t j = 0; j < 8; ++j )
+                        t[j] = ( ( ( (uint16_t)coeffs[8 * i + j] << 4 ) + Q / 2 ) / Q) & 15;
+
+                    r[0 + offset] = t[0] | ( t[1] << 4 );
+                    r[1 + offset] = t[2] | ( t[3] << 4 );
+                    r[2 + offset] = t[4] | ( t[5] << 4 );
+                    r[3 + offset] = t[6] | ( t[7] << 4 );
+                    offset += 4;
+                }
+            }
+            else if( k == 4 )
+            {
+                size_t offset = 0;
+                for ( size_t i = 0; i < coeffs.size() / 8; ++i ) {
+                    for ( size_t j = 0; j < 8; ++j )
+                        t[j] = ( ( ( (uint32_t)coeffs[8 * i + j] << 5 ) + Q / 2 ) / Q) & 31;
+
+                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
+                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
+                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
+                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
+                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
+                    offset += 5;
+                }
+            }
+
+            return r;
+        }
+
 
         /*************************************************
         * Name:        poly_add
@@ -468,6 +520,74 @@ namespace
             return r;
         }
 
+
+        /*************************************************
+        * Name:        polyvec_compress
+        *
+        * Description: Compress and serialize vector of polynomials
+        *
+        * Arguments:   - uint8_t *r: pointer to output byte array
+        *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
+        *              - polyvec *a: pointer to input vector of polynomials
+        **************************************************/
+        Botan::secure_vector<uint8_t> compress()
+        {
+            const auto k = vec.size();
+            BOTAN_ASSERT(k == 2 || k == 3 || k == 4, "k should be one of {2,3,4}");
+
+            const size_t compressed_bytes = (k == 2 || k == 3) ? k * 320 : k * 352;
+            Botan::secure_vector<uint8_t> r(compressed_bytes);
+
+            csubq();
+
+            if ( k == 2 || k == 3 )
+            {
+                uint16_t t[4];
+                size_t offset = 0;
+                for ( size_t i = 0; i < k; ++i ) {
+                    for ( size_t j = 0; j < N / 4; ++j ) {
+                        for ( size_t kk = 0; kk < 4; ++kk )
+                            t[kk] = ( ( ( (uint32_t)vec[i].coeffs[4 * j + kk] << 10 ) + Q / 2 )
+                                / Q ) & 0x3ff;
+
+                        r[0 + offset] = ( t[0] >> 0 );
+                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 2 );
+                        r[2 + offset] = ( t[1] >> 6 ) | ( t[2] << 4 );
+                        r[3 + offset] = ( t[2] >> 4 ) | ( t[3] << 6 );
+                        r[4 + offset] = ( t[3] >> 2 );
+                        offset += 5;
+                    }
+                }
+            }
+            else
+            {
+                uint16_t t[8];
+                size_t offset = 0;
+                for ( size_t i = 0; i < k; ++i ) {
+                    for ( size_t j = 0; j < N / 8; ++j ) {
+                        for ( size_t kk = 0; kk < 8; ++kk )
+                            t[kk] = ( ( ( (uint32_t)vec[i].coeffs[8 * j + kk] << 11 ) + Q / 2 )
+                                / Q ) & 0x7ff;
+
+                        r[0 + offset] = ( t[0] >> 0 );
+                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 3 );
+                        r[2 + offset] = ( t[1] >> 5 ) | ( t[2] << 6 );
+                        r[3 + offset] = ( t[2] >> 2 );
+                        r[4 + offset] = ( t[2] >> 10 ) | ( t[3] << 1 );
+                        r[5 + offset] = ( t[3] >> 7 ) | ( t[4] << 4 );
+                        r[6 + offset] = ( t[4] >> 4 ) | ( t[5] << 7 );
+                        r[7 + offset] = ( t[5] >> 1 );
+                        r[8 + offset] = ( t[5] >> 9 ) | ( t[6] << 2 );
+                        r[9 + offset] = ( t[6] >> 6 ) | ( t[7] << 5 );
+                        r[10 + offset] = ( t[7] >> 3 );
+                        offset += 11;
+                    }
+                }
+            }
+
+            return r;
+        }
+
         /*************************************************
         * Name:        polyvec_csubq
         *
@@ -549,127 +669,6 @@ namespace
     class Kyber_Internal_Operation final
     {
     public:
-        /*************************************************
-        * Name:        poly_compress
-        *
-        * Description: Compression and subsequent serialization of a polynomial
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (of length KYBER_POLYCOMPRESSEDBYTES)
-        *              - poly *a:    pointer to input polynomial
-        **************************************************/
-        secure_vector<uint8_t> poly_compress( Polynomial* a )
-        {
-            secure_vector<uint8_t> r(m_poly_compressed_bytes);
-
-            a->csubq();
-
-            uint8_t t[8];
-            if( m_k == 2 || m_k == 3 )
-            {
-                size_t offset = 0;
-                for ( size_t i = 0; i < m_N / 8; i++ ) {
-                    for ( size_t j = 0; j < 8; j++ )
-                        t[j] = ( ( ( (uint16_t)a->coeffs[8 * i + j] << 4 ) + m_Q / 2 ) / m_Q) & 15;
-
-                    r[0 + offset] = t[0] | ( t[1] << 4 );
-                    r[1 + offset] = t[2] | ( t[3] << 4 );
-                    r[2 + offset] = t[4] | ( t[5] << 4 );
-                    r[3 + offset] = t[6] | ( t[7] << 4 );
-                    offset += 4;
-                }
-            }
-            else if( m_k == 4 )
-            {
-                size_t offset = 0;
-                for ( size_t i = 0; i < m_N / 8; i++ ) {
-                    for ( size_t j = 0; j < 8; j++ )
-                        t[j] = ( ( ( (uint32_t)a->coeffs[8 * i + j] << 5 ) + m_Q / 2 ) / m_Q) & 31;
-
-                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
-                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
-                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
-                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
-                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
-                    offset += 5;
-                }
-            }
-            else
-            {
-                throw std::runtime_error( "KYBER_POLYCOMPRESSEDBYTES needs to be in {128, 160}" );
-            }
-
-            return r;
-        }
-
-        /*************************************************
-        * Name:        polyvec_compress
-        *
-        * Description: Compress and serialize vector of polynomials
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
-        *              - polyvec *a: pointer to input vector of polynomials
-        **************************************************/
-        secure_vector<uint8_t> polyvec_compress( PolynomialVector* a )
-        {
-            secure_vector<uint8_t> r(m_poly_vec_compressed_bytes);
-
-            size_t i, j, k;
-
-            a->csubq();
-
-            if ( m_k == 4 )
-            {
-                uint16_t t[8];
-                size_t offset = 0;
-                for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < m_N / 8; j++ ) {
-                        for ( k = 0; k < 8; k++ )
-                            t[k] = ( ( ( (uint32_t)a->vec[i].coeffs[8 * j + k] << 11 ) + m_Q / 2 )
-                                / m_Q ) & 0x7ff;
-
-                        r[0 + offset] = ( t[0] >> 0 );
-                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 3 );
-                        r[2 + offset] = ( t[1] >> 5 ) | ( t[2] << 6 );
-                        r[3 + offset] = ( t[2] >> 2 );
-                        r[4 + offset] = ( t[2] >> 10 ) | ( t[3] << 1 );
-                        r[5 + offset] = ( t[3] >> 7 ) | ( t[4] << 4 );
-                        r[6 + offset] = ( t[4] >> 4 ) | ( t[5] << 7 );
-                        r[7 + offset] = ( t[5] >> 1 );
-                        r[8 + offset] = ( t[5] >> 9 ) | ( t[6] << 2 );
-                        r[9 + offset] = ( t[6] >> 6 ) | ( t[7] << 5 );
-                        r[10 + offset] = ( t[7] >> 3 );
-                        offset += 11;
-                    }
-                }
-            }
-            else if ( m_k == 2 || m_k == 3 )
-            {
-                uint16_t t[4];
-                size_t offset = 0;
-                for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < m_N / 4; j++ ) {
-                        for ( k = 0; k < 4; k++ )
-                            t[k] = ( ( ( (uint32_t)a->vec[i].coeffs[4 * j + k] << 10 ) + m_Q / 2 )
-                                / m_Q ) & 0x3ff;
-
-                        r[0 + offset] = ( t[0] >> 0 );
-                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 2 );
-                        r[2 + offset] = ( t[1] >> 6 ) | ( t[2] << 4 );
-                        r[3 + offset] = ( t[2] >> 4 ) | ( t[3] << 6 );
-                        r[4 + offset] = ( t[3] >> 2 );
-                        offset += 5;
-                    }
-                }
-            }
-            else
-            {
-                throw std::runtime_error( "KYBER_POLYCOMPRESSEDBYTES needs to be in {320*KYBER_K, 352*KYBER_K}" );
-            }
-
-            return r;
-        }
 
 
         /*************************************************
@@ -749,8 +748,8 @@ namespace
         **************************************************/
         secure_vector<uint8_t> pack_ciphertext( PolynomialVector* b, Polynomial* v )
         {
-            auto ct = polyvec_compress( b );
-            auto p = poly_compress( v );
+            auto ct = b->compress();
+            const auto p = v->compress(m_k);
             ct.insert(ct.end(), p.begin(), p.end());
 
             BOTAN_ASSERT(ct.size() == m_ciphertext_bytes, "unexpected ciphertext length");
