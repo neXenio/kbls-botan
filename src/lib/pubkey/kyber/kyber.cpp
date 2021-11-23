@@ -7,6 +7,7 @@
 #include <botan/sha3.h>
 #include <botan/shake.h>
 #include <botan/stream_cipher.h>
+#include <botan/loadstor.h>
 
 #include <array>
 
@@ -41,6 +42,21 @@ namespace
         829, 2946, 3065, 1325, 2756, 1861, 1474, 1202, 2367, 3147, 1752, 2707, 171,
         3127, 3042, 1907, 1836, 1517, 359, 758, 1441
     };
+
+
+    size_t k(const Botan::KyberMode mode) {
+        switch (mode) {
+        case Botan::KyberMode::Kyber512:
+        case Botan::KyberMode::Kyber512_90s:
+            return 2;
+        case Botan::KyberMode::Kyber768:
+        case Botan::KyberMode::Kyber768_90s:
+            return 3;
+        case Botan::KyberMode::Kyber1024:
+        case Botan::KyberMode::Kyber1024_90s:
+            return 4;
+        }
+    }
 
     /*************************************************
     * Name:        csubq
@@ -175,6 +191,85 @@ namespace
             return r;
         }
 
+
+        /*************************************************
+        * Name:        cbd2
+        *
+        * Description: Given an array of uniformly random bytes, compute
+        *              polynomial with coefficients distributed according to
+        *              a centered binomial distribution with parameter eta=2
+        *
+        * Arguments:   - poly *r:                            pointer to output polynomial
+        *              - const secure_vector<uint8_t>& buf: pointer to input byte array
+        **************************************************/
+        template <typename Alloc>
+        static Polynomial cbd2(const std::vector<uint8_t, Alloc>& buf)
+        {
+            Polynomial r;
+
+            if (buf.size() < (2 * r.coeffs.size() / 4))
+            {
+                throw Botan::Invalid_Argument("Cannot cbd2 because buf incompatible buffer length!");
+            }
+
+
+            for (size_t i = 0; i < r.coeffs.size() / 8; ++i) {
+                uint32_t t = Botan::load_le<uint32_t>(buf.data(), i);
+                uint32_t d = t & 0x55555555;
+                d += (t >> 1) & 0x55555555;
+
+                for (size_t j = 0; j < 8; ++j) {
+                    int16_t a = (d >> (4 * j + 0)) & 0x3;
+                    int16_t b = (d >> (4 * j + 2)) & 0x3;
+                    r.coeffs[8 * i + j] = a - b;
+                }
+            }
+
+            return r;
+        }
+
+        /*************************************************
+        * Name:        cbd3
+        *
+        * Description: Given an array of uniformly random bytes, compute
+        *              polynomial with coefficients distributed according to
+        *              a centered binomial distribution with parameter eta=3
+        *              This function is only needed for Kyber-512
+        *
+        * Arguments:   - poly *r:            pointer to output polynomial
+        *              - const uint8_t *buf: pointer to input byte array
+        **************************************************/
+        template <typename Alloc>
+        static Polynomial cbd3(const std::vector<uint8_t, Alloc>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
+        {
+            Polynomial r;
+
+            if (buf.size() < (3 * r.coeffs.size() / 4))
+            {
+                throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
+            }
+
+            // Note: Botan::load_le<> does not support loading a 3-byte value
+            const auto load_le24 = [](const uint8_t in[], const size_t off) {
+                const auto off3 = off * 3;
+                return Botan::make_uint32(0, in[off3 + 2], in[off3 + 1], in[off3]);
+            };
+
+            for (size_t i = 0; i < r.coeffs.size() / 4; ++i) {
+                uint32_t t = load_le24(buf.data(), i);
+                uint32_t d = t & 0x00249249;
+                d += (t >> 1) & 0x00249249;
+                d += (t >> 2) & 0x00249249;
+
+                for (size_t j = 0; j < 4; ++j) {
+                    int16_t a = (d >> (6 * j + 0)) & 0x7;
+                    int16_t b = (d >> (6 * j + 3)) & 0x7;
+                    r.coeffs[4 * i + j] = a - b;
+                }
+            }
+            return r;
+        }
+
         /*************************************************
         * Name:        poly_frombytes
         *
@@ -238,6 +333,58 @@ namespace
                     msg[i] |= t << j;
                 }
             }
+        }
+
+        /*************************************************
+        * Name:        poly_compress
+        *
+        * Description: Compression and subsequent serialization of a polynomial
+        *
+        * Arguments:   - uint8_t *r: pointer to output byte array
+        *                            (of length KYBER_POLYCOMPRESSEDBYTES)
+        *              - poly *a:    pointer to input polynomial
+        **************************************************/
+        Botan::secure_vector<uint8_t> compress(const size_t k)
+        {
+            BOTAN_ASSERT(k == 2 || k == 3 || k == 4, "k should be one of {2,3,4}");
+
+            const size_t compressed_bytes = (k == 2 || k == 3) ? 128 : 160;
+            Botan::secure_vector<uint8_t> r(compressed_bytes);
+
+            csubq();
+
+            uint8_t t[8];
+            if( k == 2 || k == 3 )
+            {
+                size_t offset = 0;
+                for ( size_t i = 0; i < coeffs.size() / 8; ++i ) {
+                    for ( size_t j = 0; j < 8; ++j )
+                        t[j] = ( ( ( (uint16_t)coeffs[8 * i + j] << 4 ) + Q / 2 ) / Q) & 15;
+
+                    r[0 + offset] = t[0] | ( t[1] << 4 );
+                    r[1 + offset] = t[2] | ( t[3] << 4 );
+                    r[2 + offset] = t[4] | ( t[5] << 4 );
+                    r[3 + offset] = t[6] | ( t[7] << 4 );
+                    offset += 4;
+                }
+            }
+            else if( k == 4 )
+            {
+                size_t offset = 0;
+                for ( size_t i = 0; i < coeffs.size() / 8; ++i ) {
+                    for ( size_t j = 0; j < 8; ++j )
+                        t[j] = ( ( ( (uint32_t)coeffs[8 * i + j] << 5 ) + Q / 2 ) / Q) & 31;
+
+                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
+                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
+                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
+                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
+                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
+                    offset += 5;
+                }
+            }
+
+            return r;
         }
 
 
@@ -468,6 +615,74 @@ namespace
             return r;
         }
 
+
+        /*************************************************
+        * Name:        polyvec_compress
+        *
+        * Description: Compress and serialize vector of polynomials
+        *
+        * Arguments:   - uint8_t *r: pointer to output byte array
+        *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
+        *              - polyvec *a: pointer to input vector of polynomials
+        **************************************************/
+        Botan::secure_vector<uint8_t> compress()
+        {
+            const auto k = vec.size();
+            BOTAN_ASSERT(k == 2 || k == 3 || k == 4, "k should be one of {2,3,4}");
+
+            const size_t compressed_bytes = (k == 2 || k == 3) ? k * 320 : k * 352;
+            Botan::secure_vector<uint8_t> r(compressed_bytes);
+
+            csubq();
+
+            if ( k == 2 || k == 3 )
+            {
+                uint16_t t[4];
+                size_t offset = 0;
+                for ( size_t i = 0; i < k; ++i ) {
+                    for ( size_t j = 0; j < N / 4; ++j ) {
+                        for ( size_t kk = 0; kk < 4; ++kk )
+                            t[kk] = ( ( ( (uint32_t)vec[i].coeffs[4 * j + kk] << 10 ) + Q / 2 )
+                                / Q ) & 0x3ff;
+
+                        r[0 + offset] = ( t[0] >> 0 );
+                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 2 );
+                        r[2 + offset] = ( t[1] >> 6 ) | ( t[2] << 4 );
+                        r[3 + offset] = ( t[2] >> 4 ) | ( t[3] << 6 );
+                        r[4 + offset] = ( t[3] >> 2 );
+                        offset += 5;
+                    }
+                }
+            }
+            else
+            {
+                uint16_t t[8];
+                size_t offset = 0;
+                for ( size_t i = 0; i < k; ++i ) {
+                    for ( size_t j = 0; j < N / 8; ++j ) {
+                        for ( size_t kk = 0; kk < 8; ++kk )
+                            t[kk] = ( ( ( (uint32_t)vec[i].coeffs[8 * j + kk] << 11 ) + Q / 2 )
+                                / Q ) & 0x7ff;
+
+                        r[0 + offset] = ( t[0] >> 0 );
+                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 3 );
+                        r[2 + offset] = ( t[1] >> 5 ) | ( t[2] << 6 );
+                        r[3 + offset] = ( t[2] >> 2 );
+                        r[4 + offset] = ( t[2] >> 10 ) | ( t[3] << 1 );
+                        r[5 + offset] = ( t[3] >> 7 ) | ( t[4] << 4 );
+                        r[6 + offset] = ( t[4] >> 4 ) | ( t[5] << 7 );
+                        r[7 + offset] = ( t[5] >> 1 );
+                        r[8 + offset] = ( t[5] >> 9 ) | ( t[6] << 2 );
+                        r[9 + offset] = ( t[6] >> 6 ) | ( t[7] << 5 );
+                        r[10 + offset] = ( t[7] >> 3 );
+                        offset += 11;
+                    }
+                }
+            }
+
+            return r;
+        }
+
         /*************************************************
         * Name:        polyvec_csubq
         *
@@ -549,127 +764,6 @@ namespace
     class Kyber_Internal_Operation final
     {
     public:
-        /*************************************************
-        * Name:        poly_compress
-        *
-        * Description: Compression and subsequent serialization of a polynomial
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (of length KYBER_POLYCOMPRESSEDBYTES)
-        *              - poly *a:    pointer to input polynomial
-        **************************************************/
-        secure_vector<uint8_t> poly_compress( Polynomial* a )
-        {
-            secure_vector<uint8_t> r(m_poly_compressed_bytes);
-
-            a->csubq();
-
-            uint8_t t[8];
-            if( m_k == 2 || m_k == 3 )
-            {
-                size_t offset = 0;
-                for ( size_t i = 0; i < m_N / 8; i++ ) {
-                    for ( size_t j = 0; j < 8; j++ )
-                        t[j] = ( ( ( (uint16_t)a->coeffs[8 * i + j] << 4 ) + m_Q / 2 ) / m_Q) & 15;
-
-                    r[0 + offset] = t[0] | ( t[1] << 4 );
-                    r[1 + offset] = t[2] | ( t[3] << 4 );
-                    r[2 + offset] = t[4] | ( t[5] << 4 );
-                    r[3 + offset] = t[6] | ( t[7] << 4 );
-                    offset += 4;
-                }
-            }
-            else if( m_k == 4 )
-            {
-                size_t offset = 0;
-                for ( size_t i = 0; i < m_N / 8; i++ ) {
-                    for ( size_t j = 0; j < 8; j++ )
-                        t[j] = ( ( ( (uint32_t)a->coeffs[8 * i + j] << 5 ) + m_Q / 2 ) / m_Q) & 31;
-
-                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
-                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
-                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
-                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
-                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
-                    offset += 5;
-                }
-            }
-            else
-            {
-                throw std::runtime_error( "KYBER_POLYCOMPRESSEDBYTES needs to be in {128, 160}" );
-            }
-
-            return r;
-        }
-
-        /*************************************************
-        * Name:        polyvec_compress
-        *
-        * Description: Compress and serialize vector of polynomials
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
-        *              - polyvec *a: pointer to input vector of polynomials
-        **************************************************/
-        secure_vector<uint8_t> polyvec_compress( PolynomialVector* a )
-        {
-            secure_vector<uint8_t> r(m_poly_vec_compressed_bytes);
-
-            size_t i, j, k;
-
-            a->csubq();
-
-            if ( m_k == 4 )
-            {
-                uint16_t t[8];
-                size_t offset = 0;
-                for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < m_N / 8; j++ ) {
-                        for ( k = 0; k < 8; k++ )
-                            t[k] = ( ( ( (uint32_t)a->vec[i].coeffs[8 * j + k] << 11 ) + m_Q / 2 )
-                                / m_Q ) & 0x7ff;
-
-                        r[0 + offset] = ( t[0] >> 0 );
-                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 3 );
-                        r[2 + offset] = ( t[1] >> 5 ) | ( t[2] << 6 );
-                        r[3 + offset] = ( t[2] >> 2 );
-                        r[4 + offset] = ( t[2] >> 10 ) | ( t[3] << 1 );
-                        r[5 + offset] = ( t[3] >> 7 ) | ( t[4] << 4 );
-                        r[6 + offset] = ( t[4] >> 4 ) | ( t[5] << 7 );
-                        r[7 + offset] = ( t[5] >> 1 );
-                        r[8 + offset] = ( t[5] >> 9 ) | ( t[6] << 2 );
-                        r[9 + offset] = ( t[6] >> 6 ) | ( t[7] << 5 );
-                        r[10 + offset] = ( t[7] >> 3 );
-                        offset += 11;
-                    }
-                }
-            }
-            else if ( m_k == 2 || m_k == 3 )
-            {
-                uint16_t t[4];
-                size_t offset = 0;
-                for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < m_N / 4; j++ ) {
-                        for ( k = 0; k < 4; k++ )
-                            t[k] = ( ( ( (uint32_t)a->vec[i].coeffs[4 * j + k] << 10 ) + m_Q / 2 )
-                                / m_Q ) & 0x3ff;
-
-                        r[0 + offset] = ( t[0] >> 0 );
-                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 2 );
-                        r[2 + offset] = ( t[1] >> 6 ) | ( t[2] << 4 );
-                        r[3 + offset] = ( t[2] >> 4 ) | ( t[3] << 6 );
-                        r[4 + offset] = ( t[3] >> 2 );
-                        offset += 5;
-                    }
-                }
-            }
-            else
-            {
-                throw std::runtime_error( "KYBER_POLYCOMPRESSEDBYTES needs to be in {320*KYBER_K, 352*KYBER_K}" );
-            }
-
-            return r;
-        }
 
 
         /*************************************************
@@ -749,8 +843,8 @@ namespace
         **************************************************/
         secure_vector<uint8_t> pack_ciphertext( PolynomialVector* b, Polynomial* v )
         {
-            auto ct = polyvec_compress( b );
-            auto p = poly_compress( v );
+            auto ct = b->compress();
+            const auto p = v->compress(m_k);
             ct.insert(ct.end(), p.begin(), p.end());
 
             BOTAN_ASSERT(ct.size() == m_ciphertext_bytes, "unexpected ciphertext length");
@@ -855,150 +949,6 @@ namespace
             }
         }
 
-
-        /*************************************************
-        * Name:        load32_littleendian
-        *
-        * Description: load 4 bytes into a 32-bit integer
-        *              in little-endian order
-        *
-        * Arguments:   - const uint8_t *x: pointer to input byte array
-        *
-        * Returns 32-bit unsigned integer loaded from x
-        **************************************************/
-        uint32_t load32_littleendian(const uint8_t x[4])
-        {
-            uint32_t r;
-            r = (uint32_t)x[0];
-            r |= (uint32_t)x[1] << 8;
-            r |= (uint32_t)x[2] << 16;
-            r |= (uint32_t)x[3] << 24;
-            return r;
-        }
-
-        /*************************************************
-        * Name:        load24_littleendian
-        *
-        * Description: load 3 bytes into a 32-bit integer
-        *              in little-endian order
-        *              This function is only needed for Kyber-512
-        *
-        * Arguments:   - const uint8_t *x: pointer to input byte array
-        *
-        * Returns 32-bit unsigned integer loaded from x (most significant byte is zero)
-        **************************************************/
-
-        uint32_t load24_littleendian(const uint8_t x[3])
-        {
-            uint32_t r;
-            r = (uint32_t)x[0];
-            r |= (uint32_t)x[1] << 8;
-            r |= (uint32_t)x[2] << 16;
-            return r;
-        }
-
-
-        /*************************************************
-        * Name:        cbd2
-        *
-        * Description: Given an array of uniformly random bytes, compute
-        *              polynomial with coefficients distributed according to
-        *              a centered binomial distribution with parameter eta=2
-        *
-        * Arguments:   - poly *r:                            pointer to output polynomial
-        *              - const secure_vector<uint8_t>& buf: pointer to input byte array
-        **************************************************/
-        Polynomial cbd2(const secure_vector<uint8_t>& buf)
-        {
-            Polynomial r;
-            if (buf.size() < (2 * m_N / 4))
-            {
-                throw std::runtime_error("Cannot cbd2 because buf incompatible buffer length!");
-            }
-
-            for (unsigned int i = 0;i<m_N / 8;i++) {
-                uint32_t t = load32_littleendian(buf.data() + 4 * i);
-                uint32_t d = t & 0x55555555;
-                d += (t >> 1) & 0x55555555;
-
-                for (unsigned int j = 0;j<8;j++) {
-                    int16_t a = (d >> (4 * j + 0)) & 0x3;
-                    int16_t b = (d >> (4 * j + 2)) & 0x3;
-                    r.coeffs[8 * i + j] = a - b;
-                }
-            }
-            return r;
-        }
-
-        /*************************************************
-        * Name:        cbd3
-        *
-        * Description: Given an array of uniformly random bytes, compute
-        *              polynomial with coefficients distributed according to
-        *              a centered binomial distribution with parameter eta=3
-        *              This function is only needed for Kyber-512
-        *
-        * Arguments:   - poly *r:            pointer to output polynomial
-        *              - const uint8_t *buf: pointer to input byte array
-        **************************************************/
-        Polynomial cbd3(const secure_vector<uint8_t>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
-        {
-            Polynomial r;
-            if (buf.size() < (3 * m_N / 4))
-            {
-                throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
-            }
-            for (unsigned int i = 0;i<m_N / 4;i++) {
-                uint32_t t = load24_littleendian(buf.data() + 3 * i);
-                uint32_t d = t & 0x00249249;
-                d += (t >> 1) & 0x00249249;
-                d += (t >> 2) & 0x00249249;
-
-                for (unsigned int j = 0;j<4;j++) {
-                    int16_t a = (d >> (6 * j + 0)) & 0x7;
-                    int16_t b = (d >> (6 * j + 3)) & 0x7;
-                    r.coeffs[4 * i + j] = a - b;
-                }
-            }
-            return r;
-        }
-
-
-    Polynomial cbd_eta1(const secure_vector<uint8_t>& buf) // TODO buf[m_KYBER_ETA1*m_N / 4]
-    {
-        if (buf.size() < (m_KYBER_ETA1*m_N / 4))
-        {
-            throw std::runtime_error("Cannot cbd_eta1 because incompatible buffer length!");
-        }
-        if (m_KYBER_ETA1 == 2)
-        {
-            return cbd2(buf);
-        }
-        else if (m_KYBER_ETA1 == 3)
-        {
-            return cbd3(buf);
-        }
-        else
-        {
-            throw std::runtime_error("This implementation requires eta1 in {2,3}");
-        }
-    }
-
-    Polynomial cbd_eta2( const secure_vector<uint8_t>& buf )
-    {
-        if (buf.size() < (m_KYBER_ETA2*m_N / 4))
-        {
-            throw std::runtime_error("Cannot cbd_eta2 because incompatible buffer length!");
-        }
-        if (m_KYBER_ETA2 != 2)
-        {
-            std::runtime_error("This implementation requires eta2 = 2");
-        }
-
-        return cbd2(buf);
-    }
-
-
         /*************************************************
         * Name:        poly_getnoise_eta2
         *
@@ -1015,7 +965,7 @@ namespace
         {
             auto buf = prf( seed, nonce);
 
-            return cbd_eta2(buf);
+            return Polynomial::cbd2(buf);
         }
 
         /*************************************************
@@ -1034,7 +984,14 @@ namespace
         {
             auto buf = prf(seed, nonce);
 
-            return cbd_eta1(buf);
+            if (m_KYBER_ETA1 == 2)
+            {
+                return Polynomial::cbd2(buf);
+            }
+            else if (m_KYBER_ETA1 == 3)
+            {
+                return Polynomial::cbd3(buf);
+            }
         }
 
         /*************************************************
@@ -1700,6 +1657,20 @@ namespace Botan
         const Kyber_PrivateKey& m_key;
     };
 
+    class Kyber_Public_Data {
+    public:
+        Kyber_Public_Data(PolynomialVector polynomials, std::vector<uint8_t> seed)
+            : m_polynomials(std::move(polynomials))
+            , m_seed(std::move(seed)) {}
+
+        PolynomialVector& polynomials() { return m_polynomials; }
+        std::vector<uint8_t>& seed() { return m_seed; }
+
+    private:
+        PolynomialVector     m_polynomials;
+        std::vector<uint8_t> m_seed;
+    };
+
     std::string Kyber_PublicKey::algo_name() const
     {
         return "kyber-r3";
@@ -1735,16 +1706,26 @@ namespace Botan
          }
     }
 
-    Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode ) :
-        m_kyber_mode( mode ), m_public_key( pub_key ) {}
+    Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode )
+        : m_kyber_mode( mode )
+        {
+            if (pub_key.size() != key_length()) {
+                throw Botan::Invalid_Argument("kyber public key does not have the correct byte count");
+            }
+
+            m_public = std::make_shared<Kyber_Public_Data>(
+                PolynomialVector::frombytes( pub_key, k(m_kyber_mode)),
+                std::vector<uint8_t>(pub_key.end() - kSeedLength, pub_key.end()));
+        }
 
     std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
     {
-        return m_public_key;
+        auto pub_key = m_public->polynomials().tobytes<std::vector<uint8_t>>(k(m_kyber_mode));
+        pub_key.insert(pub_key.end(), m_public->seed().begin(), m_public->seed().end());
+        return pub_key;
     }
 
-    size_t Kyber_PublicKey::key_length() const { return m_public_key.size(); }
-
+    size_t Kyber_PublicKey::key_length() const { return Polynomial::kSerializedByteCount * k(m_kyber_mode) + kSeedLength; }
     KyberMode Kyber_PublicKey::get_mode() const { return m_kyber_mode; }
 
     bool Kyber_PublicKey::check_key( RandomNumberGenerator& rng, bool ) const
