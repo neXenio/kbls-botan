@@ -11,11 +11,17 @@
 
 #include <array>
 
+namespace Botan
+{
+namespace Internal
+{
 namespace
 {
     constexpr size_t N = 256;
     constexpr size_t Q = 3329;
     constexpr size_t Q_inv = 62209; // q^-1 mod 2^16
+
+    using Seed = std::array<uint8_t, KyberMode::kSeedLength>;
 
     constexpr int16_t zetas[128] = {
       2285, 2571, 2970, 1812, 1493, 1422, 287, 202, 3158, 622, 1577, 182, 962,
@@ -42,21 +48,6 @@ namespace
         829, 2946, 3065, 1325, 2756, 1861, 1474, 1202, 2367, 3147, 1752, 2707, 171,
         3127, 3042, 1907, 1836, 1517, 359, 758, 1441
     };
-
-
-    size_t k(const Botan::KyberMode mode) {
-        switch (mode) {
-        case Botan::KyberMode::Kyber512:
-        case Botan::KyberMode::Kyber512_90s:
-            return 2;
-        case Botan::KyberMode::Kyber768:
-        case Botan::KyberMode::Kyber768_90s:
-            return 3;
-        case Botan::KyberMode::Kyber1024:
-        case Botan::KyberMode::Kyber1024_90s:
-            return 4;
-        }
-    }
 
     /*************************************************
     * Name:        csubq
@@ -146,7 +137,7 @@ namespace
         **************************************************/
         void csubq() {
             for (auto& coeff : coeffs) {
-                coeff = ::csubq(coeff);
+                coeff = ::Botan::Internal::csubq(coeff);
             }
         }
 
@@ -281,7 +272,8 @@ namespace
         *                                  (of KYBER_POLYBYTES bytes)
         *                                  TO DO XXX
         **************************************************/
-        static Polynomial frombytes( const std::vector<uint8_t> &a, const size_t offset=0 ) {
+        template <typename Alloc>
+        static Polynomial frombytes( const std::vector<uint8_t, Alloc> &a, const size_t offset=0 ) {
             Polynomial r;
             for ( size_t i = 0; i < r.coeffs.size() / 2; ++i ) {
                 r.coeffs[2 * i]     = ( ( a[3 * i + 0 + offset] >> 0 ) | ( (uint16_t)a[3 * i + 1 + offset] << 8 ) ) & 0xFFF;
@@ -554,7 +546,8 @@ namespace
         *                                  (of length KYBER_POLYVECBYTES)
         *                                  TO DO XXX
         **************************************************/
-        static PolynomialVector frombytes( const std::vector<uint8_t> &a, const size_t k /* TODO: calculate that? */ )
+        template <typename Alloc>
+        static PolynomialVector frombytes( const std::vector<uint8_t, Alloc> &a, const size_t k /* TODO: calculate that? */ )
         {
             BOTAN_ASSERT(a.size() >= Polynomial::kSerializedByteCount * k, "wrong byte length for frombytes");
 
@@ -760,8 +753,7 @@ namespace
         }
     };
 
-    using namespace Botan;
-    class Kyber_Internal_Operation final
+    class Internal_Operation final
     {
     public:
 
@@ -992,6 +984,8 @@ namespace
             {
                 return Polynomial::cbd3(buf);
             }
+
+            throw Botan::Invalid_State("unknown ETA1 in kyber getnoise");
         }
 
         /*************************************************
@@ -1149,66 +1143,9 @@ namespace
             mp.tomsg(m);
         }
 
-
-
-        /*************************************************
-        * Name:        kyber_indcpa_keypair
-        *
-        * Description: Generates public and private key for the CPA-secure
-        *              public-key encryption scheme underlying Kyber
-        *
-        * Arguments:   - uint8_t *pk: pointer to output public key
-        *                             (of length KYBER_INDCPA_PUBLICKEYBYTES bytes)
-        *              - uint8_t *sk: pointer to output private key
-                                      (of length KYBER_INDCPA_SECRETKEYBYTES bytes)
-        **************************************************/
-        std::tuple<std::vector<uint8_t>, secure_vector<uint8_t>> kyber_indcpa_keypair(RandomNumberGenerator& rng, KyberMode mode )
+        Internal_Operation( KyberMode mode )
         {
-            Kyber_Internal_Operation kyberIntOps( mode );
-
-            unsigned int i;
-            constexpr static auto rand_size = 32;
-            byte rand[rand_size];
-            uint8_t nonce = 0;
-            const auto kyber_k = kyberIntOps.get_k();
-            PolynomialVector e(m_k);
-            PolynomialVector pkpv(m_k);
-            PolynomialVector skpv(m_k);
-
-            rng.randomize( rand, rand_size );
-            std::unique_ptr<HashFunction> hash3( HashFunction::create( "SHA-3(512)" ) );
-            hash3->update( rand, rand_size );
-            auto seed = hash3->final();
-
-            auto a = kyberIntOps.gen_matrix(seed, false);
-
-            for ( i = 0; i < kyber_k; i++ )
-                skpv.vec[i] = poly_getnoise_eta1( seed.data() + 32, nonce++ );
-            for ( i = 0; i < kyber_k; i++ )
-                e.vec[i] = poly_getnoise_eta1( seed.data() + 32, nonce++ );
-
-            skpv.ntt();
-            e.ntt();
-
-            // matrix-vector multiplication
-            for ( i = 0; i < kyber_k; i++ ) {
-                pkpv.vec[i] = PolynomialVector::pointwise_acc_montgomery(a.at( i ), skpv );
-                pkpv.vec[i].tomont();
-            }
-
-            pkpv += e;
-            pkpv.reduce();
-
-            auto isk = skpv.tobytes<secure_vector<uint8_t>>(m_k);
-            auto ipk = pkpv.tobytes<std::vector<uint8_t>>(m_k);
-            ipk.insert(ipk.end(), seed.begin(), seed.begin() + kyberIntOps.get_sym_bytes());
-
-            return {ipk, isk};
-        }
-
-        Kyber_Internal_Operation( KyberMode mode )
-        {
-            switch ( mode )
+            switch ( mode.mode )
             {
             case KyberMode::Kyber512:
             case KyberMode::Kyber512_90s:
@@ -1235,7 +1172,7 @@ namespace
                 throw std::runtime_error( "invalid kyber mode" );
                 break;
             }
-            if( mode == KyberMode::Kyber512_90s || mode == KyberMode::Kyber768_90s || mode == KyberMode::Kyber1024_90s )
+            if( mode.mode == KyberMode::Kyber512_90s || mode.mode == KyberMode::Kyber768_90s || mode.mode == KyberMode::Kyber1024_90s )
             {
                 m_kyber_90s = true;
                 m_XOF_BLOCKBYTES = m_XOF_BLOCKBYTES_90s;
@@ -1477,6 +1414,9 @@ namespace
         size_t m_KYBER_ETA1;
         bool m_kyber_90s;
     };
+
+}
+}
 }
 
 namespace Botan
@@ -1512,8 +1452,8 @@ namespace Botan
             secure_vector<uint8_t>& sharedSecret,
             const std::vector<uint8_t>& pk, RandomNumberGenerator& rng)
         {
-            Kyber_Internal_Operation kyber_internal( m_key.get_mode() );
-            auto sym_bytes = kyber_internal.get_sym_bytes();
+            Botan::Internal::Internal_Operation Internal( m_key.get_mode() );
+            auto sym_bytes = Internal.get_sym_bytes();
             secure_vector<uint8_t> buf( sym_bytes );
             rng.randomize( buf.data(), buf.size() );
             /* Don't release system RNG output */
@@ -1522,7 +1462,7 @@ namespace Botan
             std::unique_ptr<HashFunction> H;
             std::unique_ptr<HashFunction> G;
             std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
-            if( !kyber_internal.is_90s() )
+            if( !Internal.is_90s() )
             {
                 H = HashFunction::create( "SHA-3(256)" );
                 G = HashFunction::create( "SHA-3(512)" );
@@ -1549,7 +1489,7 @@ namespace Botan
             secKr = G->final();
 
             // coins are in kr+KYBER_SYMBYTES
-            auto ct = kyber_internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
+            auto ct = Internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
 
             // overwrite coins in kr with H(c)
             H->update(ct);
@@ -1600,14 +1540,14 @@ namespace Botan
             uint8_t buf[2 * 32];
             const auto sk_unlocked = unlock(sk);
             const auto sk_data = sk_unlocked.data();
-            Kyber_Internal_Operation kyber_internal( m_key.get_mode() );
-            const std::vector<uint8_t> pk( sk_unlocked.begin() + kyber_internal.get_poly_vec_bytes(), sk_unlocked.end() );
+            Botan::Internal::Internal_Operation Internal( m_key.get_mode() );
+            const std::vector<uint8_t> pk( sk_unlocked.begin() + Internal.get_poly_vec_bytes(), sk_unlocked.end() );
 
             // naming from kyber spec
             std::unique_ptr<HashFunction> H;
             std::unique_ptr<HashFunction> G;
             std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
-            if ( !kyber_internal.is_90s() )
+            if ( !Internal.is_90s() )
             {
                 H = HashFunction::create( "SHA-3(256)" );
                 G = HashFunction::create( "SHA-3(512)" );
@@ -1621,13 +1561,13 @@ namespace Botan
             secure_vector<uint8_t> secBuf;
             secure_vector<uint8_t> secKr;
 
-            kyber_internal.indcpa_dec(buf, ct, ct_len, sk_unlocked );
+            Internal.indcpa_dec(buf, ct, ct_len, sk_unlocked );
             // Use secBuf. Insert data from buf
-            const auto sym_bytes = kyber_internal.get_sym_bytes();
+            const auto sym_bytes = Internal.get_sym_bytes();
             secBuf.insert(secBuf.begin(), buf, buf + 2 * sym_bytes);
 
             /* Multitarget countermeasure for coins + contributory KEM */
-            const auto secret_key_bytes = kyber_internal.get_secret_key_bytes();
+            const auto secret_key_bytes = Internal.get_secret_key_bytes();
             for (i = 0; i < sym_bytes; i++)
             {
                 secBuf.at(sym_bytes + i) = sk_unlocked.at( secret_key_bytes - 2 * sym_bytes + i);
@@ -1636,9 +1576,9 @@ namespace Botan
             secKr = G->final();
 
             /* coins are in kr+KYBER_SYMBYTES */
-            auto cmp = kyber_internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
+            auto cmp = Internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
 
-            const auto ciphertext_bytes = kyber_internal.get_ciphertext_bytes();
+            const auto ciphertext_bytes = Internal.get_ciphertext_bytes();
             fail = !constant_time_compare(ct, cmp.data(), ciphertext_bytes);
 
             /* overwrite coins in kr with H(c) */
@@ -1657,18 +1597,84 @@ namespace Botan
         const Kyber_PrivateKey& m_key;
     };
 
-    class Kyber_Public_Data {
-    public:
-        Kyber_Public_Data(PolynomialVector polynomials, std::vector<uint8_t> seed)
-            : m_polynomials(std::move(polynomials))
-            , m_seed(std::move(seed)) {}
 
-        PolynomialVector& polynomials() { return m_polynomials; }
-        std::vector<uint8_t>& seed() { return m_seed; }
+    KyberMode::KyberMode(const Mode mode)
+        : mode(mode)
+    {
+        m_90s = true;
+        m_xof_block_bytes = 64; // AES-256 block size
+
+        switch (mode)
+        {
+        case KyberMode::Kyber512:
+            m_90s = false;
+            m_xof_block_bytes = 168; // SHAKE128 rate
+        case KyberMode::Kyber512_90s:
+            m_nist_strength = 128; // NIST Strength 1 - AES-128
+            m_k = 2;
+            m_eta1 = 3;
+            break;
+
+        case KyberMode::Kyber768:
+            m_90s = false;
+            m_xof_block_bytes = 168; // SHAKE128 rate
+        case KyberMode::Kyber768_90s:
+            m_nist_strength = 192; // NIST Strength 3 - AES-192
+            m_k = 3;
+            m_eta1 = 2;
+            break;
+
+        case KyberMode::Kyber1024:
+            m_90s = false;
+            m_xof_block_bytes = 168; // SHAKE128 rate
+        case KyberMode::Kyber1024_90s:
+            m_nist_strength = 256; // NIST Strength 5 - AES-256
+            m_k = 4;
+            m_eta1 = 2;
+            break;
+
+        default:
+            throw Botan::Invalid_State(std::string("unexpected kyber mode: ") + std::to_string(mode));
+        }
+    }
+
+    class Kyber_PublicKeyInternal {
+    public:
+        Kyber_PublicKeyInternal(KyberMode mode, std::vector<uint8_t> polynomials, const Internal::Seed &seed)
+            : m_mode(std::move(mode))
+            , m_polynomials(Internal::PolynomialVector::frombytes(std::move(polynomials), mode.k()))
+            , m_seed(seed) {}
+
+        Kyber_PublicKeyInternal(KyberMode mode, Internal::PolynomialVector polynomials, const Internal::Seed &seed)
+            : m_mode(std::move(mode))
+            , m_polynomials(std::move(polynomials))
+            , m_seed(seed) {}
+
+        Internal::PolynomialVector& polynomials() { return m_polynomials; }
+        const Internal::Seed& seed() const { return m_seed; }
+        const KyberMode& mode() const { return m_mode; }
 
     private:
-        PolynomialVector     m_polynomials;
-        std::vector<uint8_t> m_seed;
+        KyberMode        m_mode;
+        Internal::PolynomialVector m_polynomials;
+        Internal::Seed             m_seed;
+    };
+
+    class Kyber_PrivateKeyInternal {
+    public:
+        Kyber_PrivateKeyInternal(Internal::PolynomialVector polynomials, std::vector<uint8_t> pubkey_hash, secure_vector<uint8_t> z)
+            : m_polynomials(std::move(polynomials))
+            , m_public_key_hash(std::move(pubkey_hash))
+            , m_z(std::move(z)) {}
+
+        Internal::PolynomialVector& polynomials() { return m_polynomials; }
+        const std::vector<uint8_t>& public_key_hash() const { return m_public_key_hash; }
+        const secure_vector<uint8_t>& z() const { return m_z; }
+
+    private:
+        Internal::PolynomialVector m_polynomials;
+        std::vector<uint8_t>             m_public_key_hash;
+        secure_vector<uint8_t>           m_z;
     };
 
     std::string Kyber_PublicKey::algo_name() const
@@ -1683,50 +1689,35 @@ namespace Botan
 
     size_t Kyber_PublicKey::estimated_strength() const
     {
-        /* NIST Strength 1 - Kyber512 - AES 128
-         * NIST Strenght 3 - Kyber 768 - AES 192
-         * NIST Strenght 5 - Kyber 1024 - AES 256
-         */
-        switch (m_kyber_mode)
-         {
-         case KyberMode::Kyber512:
-         case KyberMode::Kyber512_90s:
-             return 128;
-             break;
-         case KyberMode::Kyber768:
-         case KyberMode::Kyber768_90s:
-             return 192;
-             break;
-         case KyberMode::Kyber1024:
-         case KyberMode::Kyber1024_90s:
-             return 256;
-             break;
-         default:
-             return 0;
-         }
+        return m_mode.estimated_strength();
     }
 
     Kyber_PublicKey::Kyber_PublicKey( const std::vector<uint8_t>& pub_key, KyberMode mode )
-        : m_kyber_mode( mode )
+        : m_mode(mode)
         {
             if (pub_key.size() != key_length()) {
                 throw Botan::Invalid_Argument("kyber public key does not have the correct byte count");
             }
 
-            m_public = std::make_shared<Kyber_Public_Data>(
-                PolynomialVector::frombytes( pub_key, k(m_kyber_mode)),
-                std::vector<uint8_t>(pub_key.end() - kSeedLength, pub_key.end()));
+            std::vector<uint8_t> poly_vec(pub_key.begin(), pub_key.end() - KyberMode::kSeedLength);
+            Internal::Seed seed;
+            std::copy(pub_key.end() - KyberMode::kSeedLength, pub_key.end(), seed.begin());
+
+            m_public = std::make_shared<Kyber_PublicKeyInternal>(std::move(mode), std::move(poly_vec), seed);
         }
 
     std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
     {
-        auto pub_key = m_public->polynomials().tobytes<std::vector<uint8_t>>(k(m_kyber_mode));
+        auto pub_key = m_public->polynomials().tobytes<std::vector<uint8_t>>(k());
         pub_key.insert(pub_key.end(), m_public->seed().begin(), m_public->seed().end());
         return pub_key;
     }
 
-    size_t Kyber_PublicKey::key_length() const { return Polynomial::kSerializedByteCount * k(m_kyber_mode) + kSeedLength; }
-    KyberMode Kyber_PublicKey::get_mode() const { return m_kyber_mode; }
+    size_t Kyber_PublicKey::key_length() const { return Internal::Polynomial::kSerializedByteCount * k() + KyberMode::kSeedLength; }
+    KyberMode Kyber_PublicKey::get_mode() const { return m_public->mode(); }
+    size_t Kyber_PublicKey::k() const {
+        return m_mode.k();
+    }
 
     bool Kyber_PublicKey::check_key( RandomNumberGenerator& rng, bool ) const
     {
@@ -1747,44 +1738,93 @@ namespace Botan
     }
 
     Kyber_PrivateKey::Kyber_PrivateKey( RandomNumberGenerator& rng, KyberMode mode )
+        : Kyber_PublicKey(mode)
     {
-        *this = generate_kyber_key(rng, mode);
-    }
+        Botan::Internal::Internal_Operation kyberIntOps( mode );
 
-    Kyber_PrivateKey::Kyber_PrivateKey( secure_vector<uint8_t> sk, std::vector<uint8_t> pk, KyberMode mode ): Kyber_PublicKey(pk, mode),  m_sk( sk )
-    {    }
+        // TODO: do we actually need to hash the random output?
+        constexpr static auto rand_size = 32;
+        byte rand[rand_size];
+        rng.randomize( rand, rand_size );
+        std::unique_ptr<HashFunction> hash3( HashFunction::create( "SHA-3(512)" ) );
+        hash3->update( rand, rand_size );
+        auto seed = hash3->final();
 
-    Kyber_PrivateKey Kyber_PrivateKey::generate_kyber_key(RandomNumberGenerator& rng, KyberMode mode)
-    {
-        Kyber_Internal_Operation kyber_internal( mode );
+        auto a = kyberIntOps.gen_matrix(seed, false);
 
-        auto [pk, sk] = kyber_internal.kyber_indcpa_keypair(rng, mode);
-        sk.insert(sk.end(), pk.begin(), pk.end());
+        Internal::PolynomialVector e(mode.k());
+        Internal::PolynomialVector pkpv(mode.k());
+        Internal::PolynomialVector skpv(mode.k());
 
-        const auto public_key_bytes = kyber_internal.get_public_key_bytes();
+        uint8_t nonce = 0;
+        for (size_t i = 0; i < mode.k(); ++i )
+            skpv.vec[i] = kyberIntOps.poly_getnoise_eta1( seed.data() + 32, nonce++ );
+        for (size_t i = 0; i < mode.k(); ++i )
+            e.vec[i] = kyberIntOps.poly_getnoise_eta1( seed.data() + 32, nonce++ );
 
-        std::unique_ptr<HashFunction> hash3(HashFunction::create("SHA-3(256)"));
-        hash3->update(pk.data(), public_key_bytes);
-        auto hash_output = hash3->final();
+        skpv.ntt();
+        e.ntt();
 
-        const auto secret_key_bytes = kyber_internal.get_secret_key_bytes();
-        const auto sym_bytes = kyber_internal.get_sym_bytes();
+        // matrix-vector multiplication
+        for (size_t i = 0; i < mode.k(); ++i ) {
+            pkpv.vec[i] = Internal::PolynomialVector::pointwise_acc_montgomery(a.at( i ), skpv );
+            pkpv.vec[i].tomont();
+        }
 
-        sk.insert(sk.end(), hash_output.begin(), hash_output.end());
-        sk.resize(sk.size() + sym_bytes);
+        pkpv += e;
+        pkpv.reduce();
+
+        Internal::Seed s;
+        std::copy(seed.begin(), seed.begin() + kyberIntOps.get_sym_bytes(), s.begin());
+        m_public = std::make_shared<Kyber_PublicKeyInternal>(mode, std::move(pkpv), s);
+
+        auto sk = skpv.tobytes<secure_vector<uint8_t>>(mode.k());
+        auto pk = public_key_bits();
+
+        std::unique_ptr<HashFunction> hash4(HashFunction::create("SHA-3(256)"));
+        hash4->update(pk);
+        auto pk_hash = hash4->final_stdvec();
 
         /* Value z for pseudo-random output on reject */
-        rng.randomize(sk.data() + secret_key_bytes - sym_bytes, sym_bytes);
+        auto z = rng.random_vec(kyberIntOps.get_sym_bytes());
 
-        BOTAN_ASSERT(pk.size() == kyber_internal.get_public_key_bytes(), "invalid public key length");
-        BOTAN_ASSERT(sk.size() == kyber_internal.get_secret_key_bytes(), "invalid private key length");
+        m_private = std::make_shared<Kyber_PrivateKeyInternal>(std::move(skpv), std::move(pk_hash), std::move(z));
+    }
 
-        return Kyber_PrivateKey(sk, pk, mode);
+    Kyber_PrivateKey::Kyber_PrivateKey( secure_vector<uint8_t> sk, std::vector<uint8_t> pk, KyberMode mode )
+        : Kyber_PublicKey(pk, std::move(mode))
+    {
+        // TODO: test me
+
+        const auto skpv_length    = Internal::Polynomial::kSerializedByteCount * k();
+        const auto pk_length      = Internal::Polynomial::kSerializedByteCount * k() + KyberMode::kSeedLength;
+        const auto pk_hash_length = 32;
+        const auto z_length       = 32;
+        const auto private_key_length = skpv_length + pk_length + pk_hash_length + z_length;
+
+        if (private_key_length != sk.size()) {
+            throw Botan::Invalid_Argument("kyber private key does not have the correct byte count");
+        }
+
+        const secure_vector<uint8_t> skpv(sk.begin(), sk.begin() + skpv_length);
+        std::vector<uint8_t>   pk_hash(sk.begin() + skpv_length + pk_length, sk.begin() + skpv_length + pk_length + pk_hash_length);
+        secure_vector<uint8_t> z(sk.end() - z_length, sk.end());
+
+        m_private = std::make_shared<Kyber_PrivateKeyInternal>(Internal::PolynomialVector::frombytes(skpv, mode.k()), std::move(pk_hash), std::move(z));
     }
 
     secure_vector<uint8_t> Kyber_PrivateKey::private_key_bits() const
     {
-        return m_sk;
+        auto pk = public_key_bits();
+        const auto& pk_hash = m_private->public_key_hash();
+        const auto& z = m_private->z();
+
+        auto sk = m_private->polynomials().tobytes<secure_vector<uint8_t>>(m_mode.k());
+        sk.insert(sk.end(), pk.begin(), pk.end());
+        sk.insert(sk.end(), pk_hash.begin(), pk_hash.end());
+        sk.insert(sk.end(), z.begin(), z.end());
+
+        return sk;
     }
 
     std::unique_ptr<PK_Ops::KEM_Encryption>

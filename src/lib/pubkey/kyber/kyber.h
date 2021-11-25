@@ -12,23 +12,49 @@
 
 namespace Botan {
 
-    enum class KyberMode
+    class KyberMode
     {
-        Kyber512,
-        Kyber512_90s,
-        Kyber768,
-        Kyber768_90s,
-        Kyber1024,
-        Kyber1024_90s
+    public:
+        static constexpr size_t kSymBytes = 32;
+        static constexpr size_t kSeedLength = kSymBytes;
+        static constexpr size_t kShake256Rate = 136*8;
+        static constexpr size_t kShake128Rate = 168*8;
+
+    public:
+        enum Mode {
+            Kyber512,
+            Kyber512_90s,
+            Kyber768,
+            Kyber768_90s,
+            Kyber1024,
+            Kyber1024_90s
+        };
+
+    public:
+        KyberMode(const Mode mode);
+
+        size_t k() const { return m_k; }
+        size_t xof_block_bytes() const { return m_xof_block_bytes; }
+        size_t estimated_strength() const { return m_nist_strength; }
+        size_t eta1() const { return m_eta1; }
+        bool   is_90s() const { return m_90s;}
+
+    public:
+        Mode mode;
+
+    private:
+        size_t m_k;
+        size_t m_xof_block_bytes;
+        size_t m_nist_strength;
+        size_t m_eta1;
+        bool   m_90s;
     };
 
-    class Kyber_Public_Data;
+    class Kyber_PublicKeyInternal;
+    class Kyber_PrivateKeyInternal;
 
     class BOTAN_PUBLIC_API(2, 0) Kyber_PublicKey : public virtual Public_Key
     {
-    protected:
-        static constexpr size_t kSeedLength = 32;
-
     public:
 
         Kyber_PublicKey( const std::vector<uint8_t>&pub_key, KyberMode mode );
@@ -59,10 +85,12 @@ namespace Botan {
                                     const std::string& provider) const override;
 
     protected:
-        Kyber_PublicKey() = default;
+        Kyber_PublicKey(KyberMode mode) : m_mode(std::move(mode)) {};
 
-        KyberMode m_kyber_mode;
-        std::shared_ptr<Kyber_Public_Data> m_public;
+        size_t k() const;
+
+        std::shared_ptr<Kyber_PublicKeyInternal> m_public;
+        KyberMode m_mode;
     };
 
 
@@ -84,10 +112,7 @@ namespace Botan {
                                         const std::string& params,
                                         const std::string& provider) const override;
     private:
-
-        secure_vector<uint8_t> m_sk;
-
-        Kyber_PrivateKey generate_kyber_key(RandomNumberGenerator& rng, Botan::KyberMode mode);
+        std::shared_ptr<Kyber_PrivateKeyInternal> m_private;
     };
 
     /**
