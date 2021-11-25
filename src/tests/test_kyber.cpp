@@ -169,7 +169,7 @@ namespace Botan_Tests {
             Test::Result run_kyber_test( Botan::KyberMode mode )
             {
                 std::string test_name;
-                switch ( mode )
+                switch ( mode.mode )
                 {
                 case Botan::KyberMode::Kyber512:
                     test_name = "kyber512 test API";
@@ -227,7 +227,7 @@ namespace Botan_Tests {
         {
             const auto round = vars.get_req_sz( "count" );
             std::string mode_str;
-            switch ( mode )
+            switch ( mode.mode )
             {
             case Botan::KyberMode::Kyber512:
                 mode_str = "Kyber512";
