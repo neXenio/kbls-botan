@@ -89,6 +89,9 @@ namespace Botan {
 
         size_t k() const;
 
+        friend class Kyber_KEM_Encryptor;
+        friend class Kyber_KEM_Decryptor;
+
         std::shared_ptr<Kyber_PublicKeyInternal> m_public;
         KyberMode m_mode;
     };

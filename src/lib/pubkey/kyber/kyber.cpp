@@ -21,8 +21,6 @@ namespace
     constexpr size_t Q = 3329;
     constexpr size_t Q_inv = 62209; // q^-1 mod 2^16
 
-    using Seed = std::array<uint8_t, KyberMode::kSeedLength>;
-
     constexpr int16_t zetas[128] = {
       2285, 2571, 2970, 1812, 1493, 1422, 287, 202, 3158, 622, 1577, 182, 962,
       2127, 1855, 1468, 573, 2004, 264, 383, 2500, 1458, 1727, 3199, 2648, 1017,
@@ -119,6 +117,65 @@ namespace
             t *= Q;
             return a - t;
         }
+
+    /*************************************************
+    * Name:        prf
+    *
+    * Description: not 90s: Usage of SHAKE256 as a PRF, concatenates secret and public input
+    *              and then generates outlen bytes of SHAKE256 output
+    *              90s mode: Usage of AES-256 CRT as a PRF, where "key" is used as the key and "nonce" is zero-padded
+    *              to a 12-byte nonce. The counter of CTR mode is initialized to zero
+    *
+    * Arguments:   - const uint8_t *key: pointer to the key
+    *                                    (of length KYBER_SYMBYTES)
+    *              - uint8_t nonce:      single-byte nonce (public PRF input)
+    * Return:       Output
+    **************************************************/
+    template <typename Alloc>
+    secure_vector<uint8_t> prf(
+        const std::vector<uint8_t, Alloc> &seed,
+        const uint8_t nonce,
+        const KyberMode &mode)
+    {
+        secure_vector<uint8_t> out;
+
+        if (!mode.is_90s())
+        {
+            // only normal kyber no 90s
+            std::vector<uint8_t> extkey;
+            extkey.reserve(seed.size() + 1);
+            extkey.insert(extkey.end(), seed.begin(), seed.end());
+            extkey.push_back(nonce);
+
+            secure_vector< uint64_t > sponge_state(25);
+            size_t sponge_state_pos = Botan::SHA_3::absorb(KyberMode::kShake256Rate, sponge_state, 0, extkey.data(), extkey.size());
+
+            // normal kyber not 90s
+            out.resize(mode.eta1() * N / 4);
+            Botan::SHA_3::finish(KyberMode::kShake256Rate, sponge_state, sponge_state_pos, 0x1F, 0x80);
+            Botan::SHA_3::expand(KyberMode::kShake256Rate, sponge_state, out.data(), out.size());
+        }
+        else
+        {
+            throw Botan::Not_Implemented("90s mode is commented out for the time being");
+
+            // 90s mode
+            // std::vector<uint8_t> buffer(12, 0);
+            // buffer.at(0) = nonce;
+            // uint8_t iv[1] = { 0 };
+
+            // std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+            // cipher->set_key( key, 32 );
+            // // IV is zero padded to block length internally
+            // cipher->set_iv( iv, 1 );
+
+            // cipher->encrypt( buffer );
+
+            // return {};
+        }
+
+        return out;
+    }
 
     class Polynomial {
       public:
@@ -231,7 +288,7 @@ namespace
         *              - const uint8_t *buf: pointer to input byte array
         **************************************************/
         template <typename Alloc>
-        static Polynomial cbd3(const std::vector<uint8_t, Alloc>& buf) // TODO bufLength   uint8_t buf[3 * m_N / 4]
+        static Polynomial cbd3(const std::vector<uint8_t, Alloc>& buf) // TODO bufLength   uint8_t buf[3 * N / 4]
         {
             Polynomial r;
 
@@ -259,6 +316,54 @@ namespace
                 }
             }
             return r;
+        }
+
+        /*************************************************
+        * Name:        poly_getnoise_eta2
+        *
+        * Description: Sample a polynomial deterministically from a seed and a nonce,
+        *              with output polynomial close to centered binomial distribution
+        *              with parameter KYBER_ETA2
+        *
+        * Arguments:   - poly *r:             pointer to output polynomial
+        *              - const uint8_t *seed: pointer to input seed
+        *                                     (of length KYBER_SYMBYTES bytes)
+        *              - uint8_t nonce:       one-byte input nonce
+        **************************************************/
+        template <typename Alloc>
+        static Polynomial getnoise_eta2(const std::vector<uint8_t, Alloc> &seed, uint8_t nonce, const KyberMode &mode)
+        {
+            const auto buf = prf(seed, nonce, mode);
+            return Polynomial::cbd2(buf);
+        }
+
+        /*************************************************
+        * Name:        poly_getnoise_eta1
+        *
+        * Description: Sample a polynomial deterministically from a seed and a nonce,
+        *              with output polynomial close to centered binomial distribution
+        *              with parameter KYBER_ETA1
+        *
+        * Arguments:   - poly *r:             pointer to output polynomial
+        *              - const uint8_t *seed: pointer to input seed
+        *                                     (of length KYBER_SYMBYTES bytes)
+        *              - uint8_t nonce:       one-byte input nonce
+        **************************************************/
+        template <typename Alloc>
+        static Polynomial getnoise_eta1(const std::vector<uint8_t, Alloc> &seed, uint8_t nonce, const KyberMode &mode)
+        {
+            auto buf = prf(seed, nonce, mode);
+
+            if (mode.eta1() == 2)
+            {
+                return Polynomial::cbd2(buf);
+            }
+            else if (mode.eta1() == 3)
+            {
+                return Polynomial::cbd3(buf);
+            }
+
+            throw Botan::Invalid_State("unknown ETA1 in kyber getnoise");
         }
 
         /*************************************************
@@ -290,12 +395,13 @@ namespace
         * Arguments:   - poly *r:            pointer to output polynomial
         *              - const uint8_t *msg: pointer to input message
         **************************************************/
-        static Polynomial frommsg( const uint8_t msg[], size_t msgLength)
+        template <typename Alloc>
+        static Polynomial from_message( const std::vector<uint8_t, Alloc> &msg)
         {
             Polynomial r;
-            if (msgLength != N / 8)
+            if (msg.size() != N / 8)
             {
-                throw std::runtime_error("KYBER_INDCPA_MSGBYTES must be equal to KYBER_N/8 bytes!");
+                throw Botan::Invalid_Argument("KYBER_INDCPA_MSGBYTES must be equal to KYBER_N/8 bytes! (is " + std::to_string(msg.size()) + ")");
             }
 
             for (size_t i = 0;i<r.coeffs.size() / 8;++i) {
@@ -458,6 +564,40 @@ namespace
             return r;
         }
 
+        /*************************************************
+        * Name:        rej_uniform
+        *
+        * Description: Run rejection sampling on uniform random bytes to generate
+        *              uniform random integers mod q
+        *
+        * Arguments:   - int16_t *r:          pointer to output buffer
+        *              - unsigned int len:    requested number of 16-bit integers
+        *                                     (uniform mod q)
+        *              - const uint8_t *buf:  pointer to input buffer
+        *                                     (assumed to be uniform random bytes)
+        *              - unsigned int buflen: length of input buffer in bytes
+        *
+        * Returns number of sampled 16-bit integers (at most len)
+        **************************************************/
+        static Polynomial sample_rej_uniform(size_t &out_count, std::vector<uint8_t> buf)
+        {
+            Polynomial p;
+            out_count = 0;
+
+            size_t pos = 0;
+            while (out_count < p.coeffs.size() && pos + 3 <= buf.size()) {
+                size_t val0 = ((buf[pos + 0] >> 0) | ((uint16_t)buf[pos + 1] << 8)) & 0xFFF;
+                size_t val1 = ((buf[pos + 1] >> 4) | ((uint16_t)buf[pos + 2] << 4)) & 0xFFF;
+                pos += 3;
+
+                if (val0 < Q)
+                    p.coeffs[out_count++] = val0;
+                if (out_count < p.coeffs.size() && val1 < Q)
+                    p.coeffs[out_count++] = val1;
+            }
+
+            return p;
+        }
 
         /*************************************************
         * Name:        poly_tomont
@@ -580,6 +720,32 @@ namespace
             }
 
             r.reduce();
+            return r;
+        }
+
+        template <typename Alloc>
+        static PolynomialVector getnoise_eta2(const std::vector<uint8_t, Alloc> &seed, uint8_t nonce, const KyberMode &mode)
+        {
+            PolynomialVector r(mode.k());
+
+            for (auto& p : r.vec)
+            {
+                p = Polynomial::getnoise_eta2(seed, nonce++, mode);
+            }
+
+            return r;
+        }
+
+        template <typename Alloc>
+        static PolynomialVector getnoise_eta1(const std::vector<uint8_t, Alloc> &seed, uint8_t nonce, const KyberMode &mode)
+        {
+            PolynomialVector r(mode.k());
+
+            for (auto& p : r.vec)
+            {
+                p = Polynomial::getnoise_eta1(seed, nonce++, mode);
+            }
+
             return r;
         }
 
@@ -753,6 +919,216 @@ namespace
         }
     };
 
+    class PolynomialMatrix
+    {
+    public:
+        PolynomialMatrix() = delete;
+
+        std::vector<PolynomialVector> mat;
+
+        static PolynomialMatrix generate(const std::vector<uint8_t>& seed, const bool transposed, const KyberMode &mode)
+        {
+            return (mode.is_90s()) ? generate_90s(seed, transposed, mode)
+                                   : generate_normal(seed, transposed, mode);
+        }
+
+        PolynomialVector pointwise_acc_montgomery(const PolynomialVector &vec, const bool with_mont = false)
+        {
+            PolynomialVector result(mat.size());
+
+            for (size_t i = 0; i < mat.size(); ++i)
+            {
+                result.vec[i] = PolynomialVector::pointwise_acc_montgomery(mat[i], vec);
+                if (with_mont)
+                {
+                    result.vec[i].tomont();
+                }
+            }
+
+            return result;
+        }
+
+
+    private:
+        explicit PolynomialMatrix(const KyberMode &mode)
+            : mat(mode.k(), PolynomialVector(mode.k())) {}
+
+        // normal mode, not 90s
+        // We instantiate XOF with SHAKE-128
+        static PolynomialMatrix generate_normal(const std::vector<uint8_t>& seed, const bool transposed, const KyberMode &mode)
+        {
+            BOTAN_ASSERT(seed.size() == KyberMode::kSymBytes, "unexpected seed size");
+
+            PolynomialMatrix matrix(mode);
+
+            for ( size_t i = 0; i < mode.k(); ++i ) {
+                for ( size_t j = 0; j < mode.k(); ++j ) {
+                    secure_vector< uint64_t > sponge_state(25);
+
+                    secure_vector<uint8_t> extseed1;
+                    extseed1.reserve(seed.size() + 2);
+                    extseed1.insert(extseed1.end(), seed.cbegin(), seed.cend());
+
+                    if (transposed)
+                    {
+                      extseed1.push_back(i);
+                      extseed1.push_back(j);
+                    }
+                    else
+                    {
+                      extseed1.push_back(j);
+                      extseed1.push_back(i);
+                    }
+
+                    size_t sponge_state_pos = Botan::SHA_3::absorb( KyberMode::kShake128Rate, sponge_state, 0, extseed1.data(), extseed1.size() );
+
+                    const size_t matrix_length = 12 * N / 8 * (1 << 12) / Q + mode.xof_block_bytes();
+
+                    // 2 extra bytes to buf_std for the expansion in the while loop  --  or not??
+                    std::vector <uint8_t> buf(matrix_length); // + 2 );
+                    Botan::SHA_3::finish( KyberMode::kShake128Rate, sponge_state, sponge_state_pos, 0x1F, 0x80 );
+                    Botan::SHA_3::expand( KyberMode::kShake128Rate, sponge_state, buf.data(), matrix_length );
+
+                    size_t unused;
+                    matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(unused, buf);
+
+    //                  TODO: This while loop is never run and all tests are passing without it.
+    //                        It seems it would be called if rej_uniform exits via the second condition -- `pos + 3 <= buflen`. But I don't know
+    //                        if this is something that can happen. Can this be removed?
+    //
+    //                     ctr = rej_uniform( a[i].vec[j].coeffs.data(), N, buf_std.data(), matrix_length );
+    //                     while ( ctr < N ) {
+    //                         const size_t off = matrix_length % 3;
+    //                         for ( k = 0; k < off; k++ )
+    //                             buf_std[k] = buf_std[matrix_length - off + k];
+
+    //                         Botan::SHA_3::permute( spongeState.data() );
+    //                         Botan::SHA_3::expand( KyberMode::kShake128Rate, spongeState, buf_std.data() + off, 168 );
+
+    //                         matrix_length = off + mode.xof_block_bytes();
+    //                         std::cout << "mat len now: " << matrix_length << std::endl;
+    //                         ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, N - ctr, buf_std.data(), matrix_length );
+    //                     }
+                }
+            }
+
+            return matrix;
+        }
+
+        // 90s mode
+        // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
+        // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
+        static PolynomialMatrix generate_90s(const std::vector<uint8_t>& seed, const bool transposed, const KyberMode &mode)
+        {
+          BOTAN_UNUSED(seed, transposed, mode);
+          throw Botan::Not_Implemented("90s is commented for now");
+            //std::vector<PolynomialVector> a(m_k, PolynomialVector(m_k));
+
+            //unsigned int ctr, i, j, k;
+            //unsigned int buflen, off;
+
+            //for ( i = 0; i < m_k; i++ ) {
+            //    for ( j = 0; j < m_k; j++ ) {
+            //        std::vector<uint8_t> buffer( 12, 0 );
+            //        if ( transposed )
+            //        {
+            //            buffer.at( 0 ) = i;
+            //            buffer.at( 1 ) = j;
+            //        }
+            //        else
+            //        {
+            //            buffer.at( 0 ) = j;
+            //            buffer.at( 1 ) = i;
+            //        }
+
+            //        // absorb
+            //        std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+            //        cipher->set_key( seed );
+            //        // IV is zero padded to block length internally
+            //        uint8_t iv[1] = { 0 };
+            //        cipher->set_iv( iv, 1 );
+
+            //        // is this still squeeze or already the first absorb?
+            //        cipher->encrypt( buffer );
+
+            //        buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES;
+            //        // 2 extra bytes to buf_std for the expansion in the while loop
+            //        std::vector <uint8_t> buf_std( buflen + 2 );
+            //        //Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
+            //        //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
+
+            //        ctr = rej_uniform( a[i].vec[j].coeffs.data(), m_N, buf_std.data(), buflen );
+
+            //        while ( ctr < m_N ) {
+            //            off = buflen % 3;
+            //            for ( k = 0; k < off; k++ )
+            //                buf_std[k] = buf_std[buflen - off + k];
+
+
+            //            // normal kyber not 90s
+            //           // Botan::SHA_3::permute( spongeState.data() );
+            //            //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
+
+
+            //            buflen = off + m_XOF_BLOCKBYTES;
+            //            ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, m_N - ctr, buf_std.data(), buflen );
+            //        }
+            //    }
+            //}
+
+            //return a;
+        }
+    };
+
+    }  // anonymous namespace
+    }  // namespace Internal
+
+    class Kyber_PublicKeyInternal {
+    public:
+        Kyber_PublicKeyInternal(KyberMode mode, std::vector<uint8_t> polynomials, std::vector<uint8_t> seed)
+            : m_mode(std::move(mode))
+            , m_polynomials(Internal::PolynomialVector::frombytes(std::move(polynomials), mode.k()))
+            , m_seed(std::move(seed)) {}
+
+        Kyber_PublicKeyInternal(KyberMode mode, Internal::PolynomialVector polynomials, std::vector<uint8_t> seed)
+            : m_mode(std::move(mode))
+            , m_polynomials(std::move(polynomials))
+            , m_seed(std::move(seed)) {}
+
+        Internal::PolynomialVector& polynomials() { return m_polynomials; }
+        const std::vector<uint8_t>& seed() const { return m_seed; }
+        const KyberMode& mode() const { return m_mode; }
+
+        Kyber_PublicKeyInternal() = delete;
+
+    private:
+        KyberMode                  m_mode;
+        Internal::PolynomialVector m_polynomials;
+        std::vector<uint8_t>       m_seed;
+    };
+
+    class Kyber_PrivateKeyInternal {
+    public:
+        Kyber_PrivateKeyInternal(Internal::PolynomialVector polynomials, std::vector<uint8_t> pubkey_hash, secure_vector<uint8_t> z)
+            : m_polynomials(std::move(polynomials))
+            , m_public_key_hash(std::move(pubkey_hash))
+            , m_z(std::move(z)) {}
+
+        Internal::PolynomialVector& polynomials() { return m_polynomials; }
+        const std::vector<uint8_t>& public_key_hash() const { return m_public_key_hash; }
+        const secure_vector<uint8_t>& z() const { return m_z; }
+
+        Kyber_PrivateKeyInternal() = delete;
+
+    private:
+        Internal::PolynomialVector m_polynomials;
+        std::vector<uint8_t>       m_public_key_hash;
+        secure_vector<uint8_t>     m_z;
+    };
+
+    namespace Internal {
+    namespace {
+
     class Internal_Operation final
     {
     public:
@@ -777,7 +1153,7 @@ namespace
             {
                 uint16_t t[8];
                 for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < m_N / 8; j++ ) {
+                    for ( j = 0; j < N / 8; j++ ) {
                         t[0] = ( a[0] >> 0 ) | ( (uint16_t)a[1] << 8 );
                         t[1] = ( a[1] >> 3 ) | ( (uint16_t)a[2] << 5 );
                         t[2] = ( a[2] >> 6 ) | ( (uint16_t)a[3] << 2 ) | ( (uint16_t)a[4] << 10 );
@@ -789,7 +1165,7 @@ namespace
                         a += 11;
 
                         for ( k = 0; k < 8; k++ )
-                            r.vec[i].coeffs[8 * j + k] = ( (uint32_t)( t[k] & 0x7FF ) * m_Q + 1024 ) >> 11;
+                            r.vec[i].coeffs[8 * j + k] = ( (uint32_t)( t[k] & 0x7FF ) * Q + 1024 ) >> 11;
                     }
                 }
 
@@ -799,7 +1175,7 @@ namespace
             {
                 uint16_t t[4];
                 for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < m_N / 4; j++ ) {
+                    for ( j = 0; j < N / 4; j++ ) {
                         t[0] = ( a[0] >> 0 ) | ( (uint16_t)a[1] << 8 );
                         t[1] = ( a[1] >> 2 ) | ( (uint16_t)a[2] << 6 );
                         t[2] = ( a[2] >> 4 ) | ( (uint16_t)a[3] << 4 );
@@ -807,7 +1183,7 @@ namespace
                         a += 5;
 
                         for ( k = 0; k < 4; k++ )
-                            r.vec[i].coeffs[4 * j + k] = ( (uint32_t)( t[k] & 0x3FF ) * m_Q + 512 ) >> 10;
+                            r.vec[i].coeffs[4 * j + k] = ( (uint32_t)( t[k] & 0x3FF ) * Q + 512 ) >> 10;
                     }
                 }
 
@@ -822,27 +1198,6 @@ namespace
 
 
 
-        /*************************************************
-        * Name:        pack_ciphertext
-        *
-        * Description: Serialize the ciphertext as concatenation of the
-        *              compressed and serialized vector of polynomials b
-        *              and the compressed and serialized polynomial v
-        *
-        * Arguments:   uint8_t *r: pointer to the output serialized ciphertext
-        *              poly *pk:   pointer to the input vector of polynomials b
-        *              poly *v:    pointer to the input polynomial v
-        **************************************************/
-        secure_vector<uint8_t> pack_ciphertext( PolynomialVector* b, Polynomial* v )
-        {
-            auto ct = b->compress();
-            const auto p = v->compress(m_k);
-            ct.insert(ct.end(), p.begin(), p.end());
-
-            BOTAN_ASSERT(ct.size() == m_ciphertext_bytes, "unexpected ciphertext length");
-
-            return ct;
-        }
 
 
         /*************************************************
@@ -874,178 +1229,12 @@ namespace
         *              - const uint8_t *packedpk: pointer to input serialized public key
         *              TO DO XXX
         **************************************************/
-        PolynomialVector unpack_pk( secure_vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
+        PolynomialVector unpack_pk( std::vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
         {
             auto pk = PolynomialVector::frombytes( packedpk, m_k );
             for ( size_t i = 0; i < get_sym_bytes(); ++i )
                 seed[i] = packedpk[i + get_poly_vec_bytes()];
             return pk;
-        }
-
-
-        /*************************************************
-        * Name:        prf
-        *
-        * Description: not 90s: Usage of SHAKE256 as a PRF, concatenates secret and public input
-        *              and then generates outlen bytes of SHAKE256 output
-        *              90s mode: Usage of AES-256 CRT as a PRF, where "key" is used as the key and "nonce" is zero-padded
-        *              to a 12-byte nonce. The counter of CTR mode is initialized to zero
-        *
-        * Arguments:   - const uint8_t *key: pointer to the key
-        *                                    (of length KYBER_SYMBYTES)
-        *              - uint8_t nonce:      single-byte nonce (public PRF input)
-        * Return:       Output
-        **************************************************/
-        secure_vector<uint8_t> prf(
-            const uint8_t key[32],
-            uint8_t nonce)
-        {
-            if (!m_kyber_90s)
-            {
-                // only normal kyber no 90s
-                unsigned int i;
-                uint8_t extkey[m_sym_bytes + 1];
-
-                for (i = 0;i<m_sym_bytes;i++)
-                    extkey[i] = key[i];
-                extkey[i] = nonce;
-
-                secure_vector< uint64_t > spongeState;
-                spongeState.resize(25);
-                size_t spongeStatePos = 0;
-
-                spongeStatePos = Botan::SHA_3::absorb(m_SHAKE256_RATE, spongeState, spongeStatePos, extkey, sizeof(extkey));
-
-                // normal kyber not 90s
-                secure_vector<uint8_t> buf_std(m_KYBER_ETA1 * m_N / 4);
-                Botan::SHA_3::finish(m_SHAKE256_RATE, spongeState, spongeStatePos, 0x1F, 0x80);
-                Botan::SHA_3::expand(m_SHAKE256_RATE, spongeState, buf_std.data(), m_KYBER_ETA1 * m_N / 4);
-
-                return buf_std;
-            }
-            else
-            {
-                // 90s mode
-                std::vector<uint8_t> buffer(12, 0);
-                buffer.at(0) = nonce;
-                uint8_t iv[1] = { 0 };
-
-                std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
-                cipher->set_key( key, 32 );
-                // IV is zero padded to block length internally
-                cipher->set_iv( iv, 1 );
-
-                cipher->encrypt( buffer );
-
-                return {};
-            }
-        }
-
-        /*************************************************
-        * Name:        poly_getnoise_eta2
-        *
-        * Description: Sample a polynomial deterministically from a seed and a nonce,
-        *              with output polynomial close to centered binomial distribution
-        *              with parameter KYBER_ETA2
-        *
-        * Arguments:   - poly *r:             pointer to output polynomial
-        *              - const uint8_t *seed: pointer to input seed
-        *                                     (of length KYBER_SYMBYTES bytes)
-        *              - uint8_t nonce:       one-byte input nonce
-        **************************************************/
-        Polynomial poly_getnoise_eta2(const uint8_t seed[32], uint8_t nonce)
-        {
-            auto buf = prf( seed, nonce);
-
-            return Polynomial::cbd2(buf);
-        }
-
-        /*************************************************
-        * Name:        poly_getnoise_eta1
-        *
-        * Description: Sample a polynomial deterministically from a seed and a nonce,
-        *              with output polynomial close to centered binomial distribution
-        *              with parameter KYBER_ETA1
-        *
-        * Arguments:   - poly *r:             pointer to output polynomial
-        *              - const uint8_t *seed: pointer to input seed
-        *                                     (of length KYBER_SYMBYTES bytes)
-        *              - uint8_t nonce:       one-byte input nonce
-        **************************************************/
-        Polynomial poly_getnoise_eta1(const uint8_t seed[32], uint8_t nonce)
-        {
-            auto buf = prf(seed, nonce);
-
-            if (m_KYBER_ETA1 == 2)
-            {
-                return Polynomial::cbd2(buf);
-            }
-            else if (m_KYBER_ETA1 == 3)
-            {
-                return Polynomial::cbd3(buf);
-            }
-
-            throw Botan::Invalid_State("unknown ETA1 in kyber getnoise");
-        }
-
-        /*************************************************
-        * Name:        indcpa_enc
-        *
-        * Description: Encryption function of the CPA-secure
-        *              public-key encryption scheme underlying Kyber.
-        *
-        * Arguments:   - uint8_t *c:           pointer to output ciphertext
-        *                                      (of length KYBER_INDCPA_BYTES bytes)
-        *              - const uint8_t *m:     pointer to input message
-        *                                      (of length KYBER_INDCPA_MSGBYTES bytes)
-        *              - const uint8_t *pk:    pointer to input public key
-        *                                      (of length KYBER_INDCPA_PUBLICKEYBYTES)
-        *              - const uint8_t *coins: pointer to input random coins
-        *                                      used as seed (of length KYBER_SYMBYTES)
-        *                                      to deterministically generate all
-        *                                      randomness
-        *                                      TO DO XXX
-        **************************************************/
-        secure_vector<uint8_t> indcpa_enc(
-            const uint8_t m[32], // TODO m [symbyts]
-            const std::vector<uint8_t>& pk,
-            const uint8_t coins[32] ) // TODO coins (symbytes)
-        {
-            unsigned int i;
-            secure_vector<uint8_t> seed( get_sym_bytes() );
-            uint8_t nonce = 0;
-            PolynomialVector sp(m_k);
-            PolynomialVector ep(m_k);
-            PolynomialVector bp(m_k);
-
-            PolynomialVector pkpv = unpack_pk( seed, pk );
-            auto k = Polynomial::frommsg( m , m_sym_bytes );
-            auto at = gen_matrix(seed, true);
-
-            for ( i = 0; i < m_k; i++ )
-                sp.vec[i] = poly_getnoise_eta1( coins, nonce++ );
-            for ( i = 0; i < m_k; i++ )
-                ep.vec[i] = poly_getnoise_eta2( coins, nonce++ );
-            auto epp = poly_getnoise_eta2( coins, nonce++ );
-
-            sp.ntt();
-
-            // matrix-vector multiplication
-            for ( i = 0; i < m_k; i++ )
-                bp.vec[i] = PolynomialVector::pointwise_acc_montgomery(at[i], sp );
-
-            auto v = PolynomialVector::pointwise_acc_montgomery(pkpv, sp );
-
-            bp.invntt_tomont();
-            v.invntt_tomont();
-
-            bp += ep;
-            v += epp;
-            v += k;
-            bp.reduce();
-            v.reduce();
-
-            return pack_ciphertext( &bp, &v );
         }
 
         /*************************************************
@@ -1064,9 +1253,9 @@ namespace
 
             if (aLength == 128)
             {
-                for (i = 0;i < m_N / 2;i++) {
-                    r->coeffs[2 * i + 0] = (((uint16_t)(a[0] & 15)*m_Q) + 8) >> 4;
-                    r->coeffs[2 * i + 1] = (((uint16_t)(a[0] >> 4)*m_Q) + 8) >> 4;
+                for (i = 0;i < N / 2;i++) {
+                    r->coeffs[2 * i + 0] = (((uint16_t)(a[0] & 15)*Q) + 8) >> 4;
+                    r->coeffs[2 * i + 1] = (((uint16_t)(a[0] >> 4)*Q) + 8) >> 4;
                     a += 1;
                 }
             }
@@ -1074,7 +1263,7 @@ namespace
             {
                 unsigned int j;
                 uint8_t t[8];
-                for (i = 0;i < m_N / 8;i++) {
+                for (i = 0;i < N / 8;i++) {
                     t[0] = (a[0] >> 0);
                     t[1] = (a[0] >> 5) | (a[1] << 3);
                     t[2] = (a[1] >> 2);
@@ -1086,7 +1275,7 @@ namespace
                     a += 5;
 
                     for (j = 0;j < 8;j++)
-                        r->coeffs[8 * i + j] = ((uint32_t)(t[j] & 31)*m_Q + 16) >> 5;
+                        r->coeffs[8 * i + j] = ((uint32_t)(t[j] & 31)*Q + 16) >> 5;
                 }
             }
             else
@@ -1143,7 +1332,7 @@ namespace
             mp.tomsg(m);
         }
 
-        Internal_Operation( KyberMode mode )
+        Internal_Operation( KyberMode mode ) : m_mode(mode)
         {
             switch ( mode.mode )
             {
@@ -1188,8 +1377,6 @@ namespace
             m_public_key_bytes = m_poly_vec_bytes + m_sym_bytes;
             m_secret_key_bytes = m_poly_vec_bytes + m_public_key_bytes + 2 * m_sym_bytes;
             m_ciphertext_bytes = m_poly_vec_compressed_bytes + m_poly_compressed_bytes;
-            m_gen_matrix_nblocks = ((12 * m_N / 8 * (1 << 12) / m_Q \
-                + m_XOF_BLOCKBYTES) / m_XOF_BLOCKBYTES);
         }
 
         size_t get_public_key_bytes() const { return m_public_key_bytes; }
@@ -1198,197 +1385,9 @@ namespace
         size_t get_secret_key_bytes() const { return m_secret_key_bytes; }
         size_t get_sym_bytes() const { return m_sym_bytes; }
         size_t get_ciphertext_bytes() const { return m_ciphertext_bytes; }
-        size_t get_k() const { return m_k; }
-        size_t get_n() const { return m_N; }
         size_t is_90s() const { return m_kyber_90s; }
 
 
-        /*************************************************
-        * Name:        rej_uniform
-        *
-        * Description: Run rejection sampling on uniform random bytes to generate
-        *              uniform random integers mod q
-        *
-        * Arguments:   - int16_t *r:          pointer to output buffer
-        *              - unsigned int len:    requested number of 16-bit integers
-        *                                     (uniform mod q)
-        *              - const uint8_t *buf:  pointer to input buffer
-        *                                     (assumed to be uniform random bytes)
-        *              - unsigned int buflen: length of input buffer in bytes
-        *
-        * Returns number of sampled 16-bit integers (at most len)
-        **************************************************/
-        unsigned int rej_uniform(int16_t* r,
-            unsigned int len,
-            const uint8_t* buf,
-            unsigned int buflen)
-        {
-            unsigned int ctr, pos;
-            uint16_t val0, val1;
-
-            ctr = pos = 0;
-            while (ctr < len && pos + 3 <= buflen) {
-                val0 = ((buf[pos + 0] >> 0) | ((uint16_t)buf[pos + 1] << 8)) & 0xFFF;
-                val1 = ((buf[pos + 1] >> 4) | ((uint16_t)buf[pos + 2] << 4)) & 0xFFF;
-                pos += 3;
-
-                if (val0 < m_Q)
-                    r[ctr++] = val0;
-                if (ctr < len && val1 < m_Q)
-                    r[ctr++] = val1;
-            }
-
-            return ctr;
-        }
-
-
-    /*************************************************
-    * Name:        gen_matrix
-    *
-    * Description: Deterministically generate matrix A (or the transpose of A)
-    *              from a seed. Entries of the matrix are polynomials that look
-    *              uniformly random. Performs rejection sampling on output of
-    *              a XOF
-    *
-    * Arguments:   - polyvec std::vector a:     vector to ouptput matrix A
-    *              - const std::vector seed:    vector to input seed
-    *              - int transposed:            boolean deciding whether A or A^T
-    *                                           is generated
-    **************************************************/
-    std::vector<PolynomialVector> gen_matrix(const secure_vector<uint8_t>& seed, const bool transposed)
-    {
-        return (m_kyber_90s) ? gen_matrix_90s(seed, transposed)
-                             : gen_matrix_normal(seed, transposed);
-    }
-
-    private:
-        // normal mode, not 90s
-        // We instantiate XOF with SHAKE-128
-        std::vector<PolynomialVector> gen_matrix_normal(const secure_vector<uint8_t>& seed, const bool transposed)
-        {
-            std::vector<PolynomialVector> a(m_k, PolynomialVector(m_k));
-
-            unsigned int ctr, i, j, k;
-            unsigned int buflen, off;
-
-            for ( i = 0; i < m_k; i++ ) {
-                for ( j = 0; j < m_k; j++ ) {
-
-                    secure_vector< uint64_t > spongeState;
-                    spongeState.resize( 25 );
-                    size_t spongeStatePos = 0;
-
-                    unsigned int h;
-                    uint8_t extseed1[m_sym_bytes + 2];
-
-                    for ( h = 0; h < m_sym_bytes; h++ )
-                    {
-                        extseed1[h] = seed[h];
-                    }
-                    if ( transposed )
-                    {
-                        extseed1[h++] = i;
-                        extseed1[h] = j;
-                    }
-                    else
-                    {
-                        extseed1[h++] = j;
-                        extseed1[h] = i;
-                    }
-
-                    spongeStatePos = Botan::SHA_3::absorb( m_SHAKE128_RATE, spongeState, spongeStatePos, extseed1, m_sym_bytes + 2 );
-
-                    buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES; // 504 (not in 90s mode)
-                    // 2 extra bytes to buf_std for the expansion in the while loop
-                    std::vector <uint8_t> buf_std( buflen + 2 );
-                    Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
-                    Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
-
-                    ctr = rej_uniform( a[i].vec[j].coeffs.data(), m_N, buf_std.data(), buflen );
-
-                    while ( ctr < m_N ) {
-                        off = buflen % 3;
-                        for ( k = 0; k < off; k++ )
-                            buf_std[k] = buf_std[buflen - off + k];
-
-                        Botan::SHA_3::permute( spongeState.data() );
-                        Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
-
-
-                        buflen = off + m_XOF_BLOCKBYTES;
-                        ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, m_N - ctr, buf_std.data(), buflen );
-                    }
-                }
-            }
-
-            return a;
-        }
-
-        // 90s mode
-        // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
-        // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
-        std::vector<PolynomialVector> gen_matrix_90s(const secure_vector<uint8_t>& seed, const bool transposed)
-        {
-            std::vector<PolynomialVector> a(m_k, PolynomialVector(m_k));
-
-            unsigned int ctr, i, j, k;
-            unsigned int buflen, off;
-
-            for ( i = 0; i < m_k; i++ ) {
-                for ( j = 0; j < m_k; j++ ) {
-                    unsigned int h;
-                    std::vector<uint8_t> buffer( 12, 0 );
-                    if ( transposed )
-                    {
-                        buffer.at( 0 ) = i;
-                        buffer.at( 1 ) = j;
-                    }
-                    else
-                    {
-                        buffer.at( 0 ) = j;
-                        buffer.at( 1 ) = i;
-                    }
-
-                    // absorb
-                    std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
-                    cipher->set_key( seed );
-                    // IV is zero padded to block length internally
-                    uint8_t iv[1] = { 0 };
-                    cipher->set_iv( iv, 1 );
-
-                    // is this still squeeze or already the first absorb?
-                    cipher->encrypt( buffer );
-
-                    buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES;
-                    // 2 extra bytes to buf_std for the expansion in the while loop
-                    std::vector <uint8_t> buf_std( buflen + 2 );
-                    //Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState, spongeStatePos, 0x1F, 0x80 );
-                    //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data(), buflen );
-
-                    ctr = rej_uniform( a[i].vec[j].coeffs.data(), m_N, buf_std.data(), buflen );
-
-                    while ( ctr < m_N ) {
-                        off = buflen % 3;
-                        for ( k = 0; k < off; k++ )
-                            buf_std[k] = buf_std[buflen - off + k];
-
-
-                        // normal kyber not 90s
-                       // Botan::SHA_3::permute( spongeState.data() );
-                        //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState, buf_std.data() + off, 168 );
-
-
-                        buflen = off + m_XOF_BLOCKBYTES;
-                        ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, m_N - ctr, buf_std.data(), buflen );
-                    }
-                }
-            }
-
-            return a;
-        }
-
-        constexpr static size_t m_N = 256;
-        constexpr static size_t m_Q = 3329;
 
         constexpr static size_t m_sym_bytes = 32;
         // constexpr static size_t m_ss_bytes = 32;
@@ -1398,9 +1397,6 @@ namespace
         // constexpr static size_t m_ETA2 = 2;
         constexpr static size_t m_XOF_BLOCKBYTES_non_90s  = 168; // SHAKE128 Rate
         constexpr static size_t m_XOF_BLOCKBYTES_90s = 64; // AES256CTR_BLOCKBYTES
-        constexpr static size_t m_SHAKE256_RATE = 136*8; // shake absorb rate
-        constexpr static size_t m_SHAKE128_RATE = 168*8;
-        constexpr static size_t m_KYBER_ETA2 = 2;
 
         size_t m_k;
         size_t m_poly_vec_bytes;
@@ -1410,9 +1406,10 @@ namespace
         size_t m_secret_key_bytes;
         size_t m_ciphertext_bytes;
         size_t m_XOF_BLOCKBYTES;
-        size_t m_gen_matrix_nblocks;
         size_t m_KYBER_ETA1;
         bool m_kyber_90s;
+
+        KyberMode m_mode;
     };
 
 }
@@ -1421,6 +1418,79 @@ namespace
 
 namespace Botan
 {
+    namespace {
+
+    /*************************************************
+    * Name:        pack_ciphertext
+    *
+    * Description: Serialize the ciphertext as concatenation of the
+    *              compressed and serialized vector of polynomials b
+    *              and the compressed and serialized polynomial v
+    *
+    * Arguments:   uint8_t *r: pointer to the output serialized ciphertext
+    *              poly *pk:   pointer to the input vector of polynomials b
+    *              poly *v:    pointer to the input polynomial v
+    **************************************************/
+    secure_vector<uint8_t> pack_ciphertext(Internal::PolynomialVector &b, Internal::Polynomial &v, const KyberMode &mode)
+    {
+        auto ct = b.compress();
+        const auto p = v.compress(mode.k());
+        ct.insert(ct.end(), p.begin(), p.end());
+
+        return ct;
+    }
+
+    /*************************************************
+    * Name:        indcpa_enc
+    *
+    * Description: Encryption function of the CPA-secure
+    *              public-key encryption scheme underlying Kyber.
+    *
+    * Arguments:   - uint8_t *c:           pointer to output ciphertext
+    *                                      (of length KYBER_INDCPA_BYTES bytes)
+    *              - const uint8_t *m:     pointer to input message
+    *                                      (of length KYBER_INDCPA_MSGBYTES bytes)
+    *              - const uint8_t *pk:    pointer to input public key
+    *                                      (of length KYBER_INDCPA_PUBLICKEYBYTES)
+    *              - const uint8_t *coins: pointer to input random coins
+    *                                      used as seed (of length KYBER_SYMBYTES)
+    *                                      to deterministically generate all
+    *                                      randomness
+    *                                      TO DO XXX
+    **************************************************/
+    secure_vector<uint8_t> indcpa_enc(
+        const Botan::secure_vector<uint8_t>            &m,
+        const Botan::secure_vector<uint8_t>            &coins,
+        const std::shared_ptr<Kyber_PublicKeyInternal>  pk,
+        const KyberMode                                &mode)
+    {
+        auto sp  = Internal::PolynomialVector::getnoise_eta1(coins, 0, mode);
+        auto ep  = Internal::PolynomialVector::getnoise_eta2(coins, mode.k(), mode);
+        auto epp = Internal::Polynomial::getnoise_eta2(coins, 2 * mode.k(), mode);
+
+        auto k = Internal::Polynomial::from_message(m);
+        auto at = Internal::PolynomialMatrix::generate(pk->seed(), true, mode);
+
+        sp.ntt();
+
+        // matrix-vector multiplication
+        auto bp = at.pointwise_acc_montgomery(sp);
+        auto v = Internal::PolynomialVector::pointwise_acc_montgomery(pk->polynomials(), sp );
+
+        bp.invntt_tomont();
+        v.invntt_tomont();
+
+        bp += ep;
+        v += epp;
+        v += k;
+        bp.reduce();
+        v.reduce();
+
+        return pack_ciphertext(bp, v, mode);
+    }
+    }
+
+
 
     class Kyber_KEM_Encryptor final : public PK_Ops::KEM_Encryption
     {
@@ -1440,7 +1510,7 @@ namespace Botan
 
             secure_vector<uint8_t> plaintext;
             plaintext.resize(desired_shared_key_len);
-            secure_vector<uint8_t> ciphertext = kyber_encrypt(plaintext, m_key.public_key_bits(), rng);
+            secure_vector<uint8_t> ciphertext = kyber_encrypt(plaintext, rng);
 
             out_shared_key.swap(plaintext);
             out_encapsulated_key.swap(ciphertext);
@@ -1449,11 +1519,9 @@ namespace Botan
     private:
 
         secure_vector<uint8_t> kyber_encrypt(
-            secure_vector<uint8_t>& sharedSecret,
-            const std::vector<uint8_t>& pk, RandomNumberGenerator& rng)
+            secure_vector<uint8_t>& sharedSecret, RandomNumberGenerator& rng)
         {
-            Botan::Internal::Internal_Operation Internal( m_key.get_mode() );
-            auto sym_bytes = Internal.get_sym_bytes();
+            const auto sym_bytes = KyberMode::kSymBytes;
             secure_vector<uint8_t> buf( sym_bytes );
             rng.randomize( buf.data(), buf.size() );
             /* Don't release system RNG output */
@@ -1462,7 +1530,7 @@ namespace Botan
             std::unique_ptr<HashFunction> H;
             std::unique_ptr<HashFunction> G;
             std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
-            if( !Internal.is_90s() )
+            if( !m_key.get_mode().is_90s() )
             {
                 H = HashFunction::create( "SHA-3(256)" );
                 G = HashFunction::create( "SHA-3(512)" );
@@ -1481,15 +1549,16 @@ namespace Botan
             secBuf = H->final();
 
             // Multitarget countermeasure for coins + contributory KEM
-            H->update(pk);
+            H->update(m_key.public_key_bits());
             auto tmp = H->final();
-            secBuf.insert(secBuf.end(), tmp.begin(), tmp.end());
 
             G->update(secBuf);
+            G->update(tmp);
             secKr = G->final();
 
+
             // coins are in kr+KYBER_SYMBYTES
-            auto ct = Internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
+            auto ct = indcpa_enc(secBuf, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
 
             // overwrite coins in kr with H(c)
             H->update(ct);
@@ -1575,8 +1644,10 @@ namespace Botan
             G->update(secBuf);
             secKr = G->final();
 
+
+
             /* coins are in kr+KYBER_SYMBYTES */
-            auto cmp = Internal.indcpa_enc(secBuf.data(), pk, secKr.data() + sym_bytes );
+            auto cmp = indcpa_enc({secBuf.begin(), secBuf.begin() + sym_bytes}, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
 
             const auto ciphertext_bytes = Internal.get_ciphertext_bytes();
             fail = !constant_time_compare(ct, cmp.data(), ciphertext_bytes);
@@ -1609,6 +1680,7 @@ namespace Botan
         case KyberMode::Kyber512:
             m_90s = false;
             m_xof_block_bytes = 168; // SHAKE128 rate
+            // fall through
         case KyberMode::Kyber512_90s:
             m_nist_strength = 128; // NIST Strength 1 - AES-128
             m_k = 2;
@@ -1618,6 +1690,7 @@ namespace Botan
         case KyberMode::Kyber768:
             m_90s = false;
             m_xof_block_bytes = 168; // SHAKE128 rate
+            // fall through
         case KyberMode::Kyber768_90s:
             m_nist_strength = 192; // NIST Strength 3 - AES-192
             m_k = 3;
@@ -1627,6 +1700,7 @@ namespace Botan
         case KyberMode::Kyber1024:
             m_90s = false;
             m_xof_block_bytes = 168; // SHAKE128 rate
+            // fall through
         case KyberMode::Kyber1024_90s:
             m_nist_strength = 256; // NIST Strength 5 - AES-256
             m_k = 4;
@@ -1637,45 +1711,6 @@ namespace Botan
             throw Botan::Invalid_State(std::string("unexpected kyber mode: ") + std::to_string(mode));
         }
     }
-
-    class Kyber_PublicKeyInternal {
-    public:
-        Kyber_PublicKeyInternal(KyberMode mode, std::vector<uint8_t> polynomials, const Internal::Seed &seed)
-            : m_mode(std::move(mode))
-            , m_polynomials(Internal::PolynomialVector::frombytes(std::move(polynomials), mode.k()))
-            , m_seed(seed) {}
-
-        Kyber_PublicKeyInternal(KyberMode mode, Internal::PolynomialVector polynomials, const Internal::Seed &seed)
-            : m_mode(std::move(mode))
-            , m_polynomials(std::move(polynomials))
-            , m_seed(seed) {}
-
-        Internal::PolynomialVector& polynomials() { return m_polynomials; }
-        const Internal::Seed& seed() const { return m_seed; }
-        const KyberMode& mode() const { return m_mode; }
-
-    private:
-        KyberMode        m_mode;
-        Internal::PolynomialVector m_polynomials;
-        Internal::Seed             m_seed;
-    };
-
-    class Kyber_PrivateKeyInternal {
-    public:
-        Kyber_PrivateKeyInternal(Internal::PolynomialVector polynomials, std::vector<uint8_t> pubkey_hash, secure_vector<uint8_t> z)
-            : m_polynomials(std::move(polynomials))
-            , m_public_key_hash(std::move(pubkey_hash))
-            , m_z(std::move(z)) {}
-
-        Internal::PolynomialVector& polynomials() { return m_polynomials; }
-        const std::vector<uint8_t>& public_key_hash() const { return m_public_key_hash; }
-        const secure_vector<uint8_t>& z() const { return m_z; }
-
-    private:
-        Internal::PolynomialVector m_polynomials;
-        std::vector<uint8_t>             m_public_key_hash;
-        secure_vector<uint8_t>           m_z;
-    };
 
     std::string Kyber_PublicKey::algo_name() const
     {
@@ -1700,10 +1735,9 @@ namespace Botan
             }
 
             std::vector<uint8_t> poly_vec(pub_key.begin(), pub_key.end() - KyberMode::kSeedLength);
-            Internal::Seed seed;
-            std::copy(pub_key.end() - KyberMode::kSeedLength, pub_key.end(), seed.begin());
+            std::vector<uint8_t> seed(pub_key.end() - KyberMode::kSeedLength, pub_key.end());
 
-            m_public = std::make_shared<Kyber_PublicKeyInternal>(std::move(mode), std::move(poly_vec), seed);
+            m_public = std::make_shared<Kyber_PublicKeyInternal>(std::move(mode), std::move(poly_vec), std::move(seed));
         }
 
     std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
@@ -1748,35 +1782,24 @@ namespace Botan
         rng.randomize( rand, rand_size );
         std::unique_ptr<HashFunction> hash3( HashFunction::create( "SHA-3(512)" ) );
         hash3->update( rand, rand_size );
-        auto seed = hash3->final();
+        auto seed0 = hash3->final();
 
-        auto a = kyberIntOps.gen_matrix(seed, false);
+        std::vector<uint8_t>   seed1(seed0.begin(),      seed0.begin() + 32);
+        secure_vector<uint8_t> seed2(seed0.begin() + 32, seed0.begin() + 64);
 
-        Internal::PolynomialVector e(mode.k());
-        Internal::PolynomialVector pkpv(mode.k());
-        Internal::PolynomialVector skpv(mode.k());
-
-        uint8_t nonce = 0;
-        for (size_t i = 0; i < mode.k(); ++i )
-            skpv.vec[i] = kyberIntOps.poly_getnoise_eta1( seed.data() + 32, nonce++ );
-        for (size_t i = 0; i < mode.k(); ++i )
-            e.vec[i] = kyberIntOps.poly_getnoise_eta1( seed.data() + 32, nonce++ );
+        auto a    = Internal::PolynomialMatrix::generate(seed1, false, mode);
+        auto skpv = Internal::PolynomialVector::getnoise_eta1(seed2, 0, mode);
+        auto e    = Internal::PolynomialVector::getnoise_eta1(seed2, mode.k(), mode);
 
         skpv.ntt();
         e.ntt();
 
         // matrix-vector multiplication
-        for (size_t i = 0; i < mode.k(); ++i ) {
-            pkpv.vec[i] = Internal::PolynomialVector::pointwise_acc_montgomery(a.at( i ), skpv );
-            pkpv.vec[i].tomont();
-        }
-
+        auto pkpv = a.pointwise_acc_montgomery(skpv, true);
         pkpv += e;
         pkpv.reduce();
 
-        Internal::Seed s;
-        std::copy(seed.begin(), seed.begin() + kyberIntOps.get_sym_bytes(), s.begin());
-        m_public = std::make_shared<Kyber_PublicKeyInternal>(mode, std::move(pkpv), s);
+        m_public = std::make_shared<Kyber_PublicKeyInternal>(mode, std::move(pkpv), std::move(seed1));
 
         auto sk = skpv.tobytes<secure_vector<uint8_t>>(mode.k());
         auto pk = public_key_bits();
