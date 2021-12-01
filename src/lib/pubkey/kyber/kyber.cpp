@@ -421,70 +421,22 @@ namespace
         * Arguments:   - uint8_t *msg: pointer to output message
         *              - poly *a:      pointer to input polynomial
         **************************************************/
-        void tomsg(uint8_t msg[32]) {  // TODO msg [ symbytes]
+        template <typename T = Botan::secure_vector<uint8_t>>
+        T to_message() {
+            T result(coeffs.size() / 8);
+
             this->csubq();
 
-            for (size_t i = 0;i<coeffs.size() / 8;++i) {
-                msg[i] = 0;
+            for (size_t i = 0; i < coeffs.size() / 8; ++i) {
+                result[i] = 0;
                 for (size_t j = 0;j<8;++j) {
-                    uint16_t t = ((((uint16_t)this->coeffs[8 * i + j] << 1) + Q / 2) / Q) & 1;
-                    msg[i] |= t << j;
+                    const uint16_t t = ((((uint16_t)this->coeffs[8 * i + j] << 1) + Q / 2) / Q) & 1;
+                    result[i] |= t << j;
                 }
             }
+
+            return result;
         }
-
-        /*************************************************
-        * Name:        poly_compress
-        *
-        * Description: Compression and subsequent serialization of a polynomial
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (of length KYBER_POLYCOMPRESSEDBYTES)
-        *              - poly *a:    pointer to input polynomial
-        **************************************************/
-        Botan::secure_vector<uint8_t> compress(const size_t k)
-        {
-            BOTAN_ASSERT(k == 2 || k == 3 || k == 4, "k should be one of {2,3,4}");
-
-            const size_t compressed_bytes = (k == 2 || k == 3) ? 128 : 160;
-            Botan::secure_vector<uint8_t> r(compressed_bytes);
-
-            csubq();
-
-            uint8_t t[8];
-            if( k == 2 || k == 3 )
-            {
-                size_t offset = 0;
-                for ( size_t i = 0; i < coeffs.size() / 8; ++i ) {
-                    for ( size_t j = 0; j < 8; ++j )
-                        t[j] = ( ( ( (uint16_t)coeffs[8 * i + j] << 4 ) + Q / 2 ) / Q) & 15;
-
-                    r[0 + offset] = t[0] | ( t[1] << 4 );
-                    r[1 + offset] = t[2] | ( t[3] << 4 );
-                    r[2 + offset] = t[4] | ( t[5] << 4 );
-                    r[3 + offset] = t[6] | ( t[7] << 4 );
-                    offset += 4;
-                }
-            }
-            else if( k == 4 )
-            {
-                size_t offset = 0;
-                for ( size_t i = 0; i < coeffs.size() / 8; ++i ) {
-                    for ( size_t j = 0; j < 8; ++j )
-                        t[j] = ( ( ( (uint32_t)coeffs[8 * i + j] << 5 ) + Q / 2 ) / Q) & 31;
-
-                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
-                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
-                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
-                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
-                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
-                    offset += 5;
-                }
-            }
-
-            return r;
-        }
-
 
         /*************************************************
         * Name:        poly_add
@@ -774,74 +726,6 @@ namespace
             return r;
         }
 
-
-        /*************************************************
-        * Name:        polyvec_compress
-        *
-        * Description: Compress and serialize vector of polynomials
-        *
-        * Arguments:   - uint8_t *r: pointer to output byte array
-        *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
-        *              - polyvec *a: pointer to input vector of polynomials
-        **************************************************/
-        Botan::secure_vector<uint8_t> compress()
-        {
-            const auto k = vec.size();
-            BOTAN_ASSERT(k == 2 || k == 3 || k == 4, "k should be one of {2,3,4}");
-
-            const size_t compressed_bytes = (k == 2 || k == 3) ? k * 320 : k * 352;
-            Botan::secure_vector<uint8_t> r(compressed_bytes);
-
-            csubq();
-
-            if ( k == 2 || k == 3 )
-            {
-                uint16_t t[4];
-                size_t offset = 0;
-                for ( size_t i = 0; i < k; ++i ) {
-                    for ( size_t j = 0; j < N / 4; ++j ) {
-                        for ( size_t kk = 0; kk < 4; ++kk )
-                            t[kk] = ( ( ( (uint32_t)vec[i].coeffs[4 * j + kk] << 10 ) + Q / 2 )
-                                / Q ) & 0x3ff;
-
-                        r[0 + offset] = ( t[0] >> 0 );
-                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 2 );
-                        r[2 + offset] = ( t[1] >> 6 ) | ( t[2] << 4 );
-                        r[3 + offset] = ( t[2] >> 4 ) | ( t[3] << 6 );
-                        r[4 + offset] = ( t[3] >> 2 );
-                        offset += 5;
-                    }
-                }
-            }
-            else
-            {
-                uint16_t t[8];
-                size_t offset = 0;
-                for ( size_t i = 0; i < k; ++i ) {
-                    for ( size_t j = 0; j < N / 8; ++j ) {
-                        for ( size_t kk = 0; kk < 8; ++kk )
-                            t[kk] = ( ( ( (uint32_t)vec[i].coeffs[8 * j + kk] << 11 ) + Q / 2 )
-                                / Q ) & 0x7ff;
-
-                        r[0 + offset] = ( t[0] >> 0 );
-                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 3 );
-                        r[2 + offset] = ( t[1] >> 5 ) | ( t[2] << 6 );
-                        r[3 + offset] = ( t[2] >> 2 );
-                        r[4 + offset] = ( t[2] >> 10 ) | ( t[3] << 1 );
-                        r[5 + offset] = ( t[3] >> 7 ) | ( t[4] << 4 );
-                        r[6 + offset] = ( t[4] >> 4 ) | ( t[5] << 7 );
-                        r[7 + offset] = ( t[5] >> 1 );
-                        r[8 + offset] = ( t[5] >> 9 ) | ( t[6] << 2 );
-                        r[9 + offset] = ( t[6] >> 6 ) | ( t[7] << 5 );
-                        r[10 + offset] = ( t[7] >> 3 );
-                        offset += 11;
-                    }
-                }
-            }
-
-            return r;
-        }
-
         /*************************************************
         * Name:        polyvec_csubq
         *
@@ -1080,6 +964,274 @@ namespace
         }
     };
 
+    class Ciphertext
+    {
+    protected:
+        KyberMode m_mode;
+
+    public:
+        PolynomialVector b;
+        Polynomial       v;
+
+    public:
+        Ciphertext() = delete;
+        Ciphertext(PolynomialVector b, Polynomial v, const KyberMode &mode)
+            : m_mode(mode), b(std::move(b)) , v(std::move(v)) {}
+
+        static Ciphertext from_bytes(Botan::secure_vector<uint8_t> buffer, const KyberMode &mode)
+        {
+            const auto expected_length = polynomial_vector_compressed_bytes(mode) +
+                                         polynomial_compressed_bytes(mode);
+            if (buffer.size() != expected_length) {
+                throw Invalid_Argument("unexpected length of ciphertext buffer");
+            }
+
+            Botan::secure_vector<uint8_t> pv(buffer.begin(),
+                                             buffer.begin() + polynomial_vector_compressed_bytes(mode));
+            Botan::secure_vector<uint8_t> p(buffer.begin() + polynomial_vector_compressed_bytes(mode),
+                                            buffer.end());
+
+            return Ciphertext(decompress_polynomial_vector(pv, mode),
+                              decompress_polynomial(p, mode),
+                              mode);
+        }
+
+        Botan::secure_vector<uint8_t> to_bytes() {
+            auto ct = compress(b, m_mode);
+            const auto p = compress(v, m_mode);
+            ct.insert(ct.end(), p.begin(), p.end());
+
+            return ct;
+        }
+
+    private:
+        static size_t polynomial_vector_compressed_bytes(const KyberMode &mode) {
+            const auto k = mode.k();
+            return (k == 2 || k == 3) ? k * 320 : k * 352;
+        }
+
+        static size_t polynomial_compressed_bytes(const KyberMode &mode) {
+            const auto k = mode.k();
+            return (k == 2 || k == 3) ? 128 : 160;
+        }
+
+        /*************************************************
+        * Name:        polyvec_compress
+        *
+        * Description: Compress and serialize vector of polynomials
+        *
+        * Arguments:   - uint8_t *r: pointer to output byte array
+        *                            (needs space for KYBER_POLYVECCOMPRESSEDBYTES)
+        *              - polyvec *a: pointer to input vector of polynomials
+        **************************************************/
+        static Botan::secure_vector<uint8_t> compress(PolynomialVector &pv, const KyberMode &mode)
+        {
+            Botan::secure_vector<uint8_t> r(polynomial_vector_compressed_bytes(mode));
+
+            pv.csubq();
+
+            if ( mode.k() == 2 || mode.k() == 3 )
+            {
+                uint16_t t[4];
+                size_t offset = 0;
+                for ( size_t i = 0; i < mode.k(); ++i ) {
+                    for ( size_t j = 0; j < N / 4; ++j ) {
+                        for ( size_t k = 0; k < 4; ++k )
+                            t[k] = ( ( ( (uint32_t)pv.vec[i].coeffs[4 * j + k] << 10 ) + Q / 2 )
+                                / Q ) & 0x3ff;
+
+                        r[0 + offset] = ( t[0] >> 0 );
+                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 2 );
+                        r[2 + offset] = ( t[1] >> 6 ) | ( t[2] << 4 );
+                        r[3 + offset] = ( t[2] >> 4 ) | ( t[3] << 6 );
+                        r[4 + offset] = ( t[3] >> 2 );
+                        offset += 5;
+                    }
+                }
+            }
+            else
+            {
+                uint16_t t[8];
+                size_t offset = 0;
+                for ( size_t i = 0; i < mode.k(); ++i ) {
+                    for ( size_t j = 0; j < N / 8; ++j ) {
+                        for ( size_t k = 0; k < 8; ++k )
+                            t[k] = ( ( ( (uint32_t)pv.vec[i].coeffs[8 * j + k] << 11 ) + Q / 2 )
+                                / Q ) & 0x7ff;
+
+                        r[0 + offset] = ( t[0] >> 0 );
+                        r[1 + offset] = ( t[0] >> 8 ) | ( t[1] << 3 );
+                        r[2 + offset] = ( t[1] >> 5 ) | ( t[2] << 6 );
+                        r[3 + offset] = ( t[2] >> 2 );
+                        r[4 + offset] = ( t[2] >> 10 ) | ( t[3] << 1 );
+                        r[5 + offset] = ( t[3] >> 7 ) | ( t[4] << 4 );
+                        r[6 + offset] = ( t[4] >> 4 ) | ( t[5] << 7 );
+                        r[7 + offset] = ( t[5] >> 1 );
+                        r[8 + offset] = ( t[5] >> 9 ) | ( t[6] << 2 );
+                        r[9 + offset] = ( t[6] >> 6 ) | ( t[7] << 5 );
+                        r[10 + offset] = ( t[7] >> 3 );
+                        offset += 11;
+                    }
+                }
+            }
+
+            return r;
+        }
+
+        /*************************************************
+        * Name:        poly_compress
+        *
+        * Description: Compression and subsequent serialization of a polynomial
+        *
+        * Arguments:   - uint8_t *r: pointer to output byte array
+        *                            (of length KYBER_POLYCOMPRESSEDBYTES)
+        *              - poly *a:    pointer to input polynomial
+        **************************************************/
+        static Botan::secure_vector<uint8_t> compress(Polynomial &p, const KyberMode &mode)
+        {
+            Botan::secure_vector<uint8_t> r(polynomial_compressed_bytes(mode));
+
+            p.csubq();
+
+            uint8_t t[8];
+            if( mode.k() == 2 || mode.k() == 3 )
+            {
+                size_t offset = 0;
+                for ( size_t i = 0; i < p.coeffs.size() / 8; ++i ) {
+                    for ( size_t j = 0; j < 8; ++j )
+                        t[j] = ( ( ( (uint16_t)p.coeffs[8 * i + j] << 4 ) + Q / 2 ) / Q) & 15;
+
+                    r[0 + offset] = t[0] | ( t[1] << 4 );
+                    r[1 + offset] = t[2] | ( t[3] << 4 );
+                    r[2 + offset] = t[4] | ( t[5] << 4 );
+                    r[3 + offset] = t[6] | ( t[7] << 4 );
+                    offset += 4;
+                }
+            }
+            else if( mode.k() == 4 )
+            {
+                size_t offset = 0;
+                for ( size_t i = 0; i < p.coeffs.size() / 8; ++i ) {
+                    for ( size_t j = 0; j < 8; ++j )
+                        t[j] = ( ( ( (uint32_t)p.coeffs[8 * i + j] << 5 ) + Q / 2 ) / Q) & 31;
+
+                    r[0 + offset] = ( t[0] >> 0 ) | ( t[1] << 5 );
+                    r[1 + offset] = ( t[1] >> 3 ) | ( t[2] << 2 ) | ( t[3] << 7 );
+                    r[2 + offset] = ( t[3] >> 1 ) | ( t[4] << 4 );
+                    r[3 + offset] = ( t[4] >> 4 ) | ( t[5] << 1 ) | ( t[6] << 6 );
+                    r[4 + offset] = ( t[6] >> 2 ) | ( t[7] << 3 );
+                    offset += 5;
+                }
+            }
+
+            return r;
+        }
+
+        /*************************************************
+        * Name:        polyvec_decompress
+        *
+        * Description: De-serialize and decompress vector of polynomials;
+        *              approximate inverse of polyvec_compress
+        *
+        * Arguments:   - polyvec *r:       pointer to output vector of polynomials
+        *              - const uint8_t *a: pointer to input byte array
+        *                                  (of length KYBER_POLYVECCOMPRESSEDBYTES)
+        **************************************************/
+        static PolynomialVector decompress_polynomial_vector(const Botan::secure_vector<uint8_t> &buffer, const KyberMode &mode)
+        {
+            BOTAN_ASSERT(buffer.size() == polynomial_vector_compressed_bytes(mode), "unexpected length of compressed polynomial vector");
+
+            PolynomialVector r(mode.k());
+            auto a = buffer.data();
+
+            if (mode.k() == 4)
+            {
+                uint16_t t[8];
+                for (size_t i = 0; i < mode.k(); ++i ) {
+                    for (size_t j = 0; j < N / 8; ++j ) {
+                        t[0] = ( a[0] >> 0 ) | ( (uint16_t)a[1] << 8 );
+                        t[1] = ( a[1] >> 3 ) | ( (uint16_t)a[2] << 5 );
+                        t[2] = ( a[2] >> 6 ) | ( (uint16_t)a[3] << 2 ) | ( (uint16_t)a[4] << 10 );
+                        t[3] = ( a[4] >> 1 ) | ( (uint16_t)a[5] << 7 );
+                        t[4] = ( a[5] >> 4 ) | ( (uint16_t)a[6] << 4 );
+                        t[5] = ( a[6] >> 7 ) | ( (uint16_t)a[7] << 1 ) | ( (uint16_t)a[8] << 9 );
+                        t[6] = ( a[8] >> 2 ) | ( (uint16_t)a[9] << 6 );
+                        t[7] = ( a[9] >> 5 ) | ( (uint16_t)a[10] << 3 );
+                        a += 11;
+
+                        for (size_t k = 0; k < 8; ++k )
+                            r.vec[i].coeffs[8 * j + k] = ( (uint32_t)( t[k] & 0x7FF ) * Q + 1024 ) >> 11;
+                    }
+                }
+            }
+            else
+            {
+                uint16_t t[4];
+                for (size_t i = 0; i < mode.k(); ++i ) {
+                    for (size_t j = 0; j < N / 4; ++j ) {
+                        t[0] = ( a[0] >> 0 ) | ( (uint16_t)a[1] << 8 );
+                        t[1] = ( a[1] >> 2 ) | ( (uint16_t)a[2] << 6 );
+                        t[2] = ( a[2] >> 4 ) | ( (uint16_t)a[3] << 4 );
+                        t[3] = ( a[3] >> 6 ) | ( (uint16_t)a[4] << 2 );
+                        a += 5;
+
+                        for (size_t k = 0; k < 4; ++k )
+                            r.vec[i].coeffs[4 * j + k] = ( (uint32_t)( t[k] & 0x3FF ) * Q + 512 ) >> 10;
+                    }
+                }
+            }
+
+            return r;
+        }
+
+        /*************************************************
+        * Name:        poly_decompress
+        *
+        * Description: De-serialization and subsequent decompression of a polynomial;
+        *              approximate inverse of poly_compress
+        *
+        * Arguments:   - poly *r:          pointer to output polynomial
+        *              - const uint8_t *a: pointer to input byte array
+        *                                  (of length KYBER_POLYCOMPRESSEDBYTES bytes)
+        **************************************************/
+        static Polynomial decompress_polynomial(const Botan::secure_vector<uint8_t> &buffer, const KyberMode &mode)
+        {
+            BOTAN_ASSERT(buffer.size() == polynomial_compressed_bytes(mode), "unexpected length of compressed polynomial");
+
+            Polynomial r;
+            auto a = buffer.data();
+
+            if (mode.k() == 4)
+            {
+                uint8_t t[8];
+                for (size_t i = 0; i < N / 8; ++i) {
+                    t[0] = (a[0] >> 0);
+                    t[1] = (a[0] >> 5) | (a[1] << 3);
+                    t[2] = (a[1] >> 2);
+                    t[3] = (a[1] >> 7) | (a[2] << 1);
+                    t[4] = (a[2] >> 4) | (a[3] << 4);
+                    t[5] = (a[3] >> 1);
+                    t[6] = (a[3] >> 6) | (a[4] << 2);
+                    t[7] = (a[4] >> 3);
+                    a += 5;
+
+                    for (size_t j = 0; j < 8; ++j)
+                        r.coeffs[8 * i + j] = ((uint32_t)(t[j] & 31)*Q + 16) >> 5;
+                }
+            }
+            else
+            {
+                for (size_t i = 0; i < N / 2; ++i) {
+                    r.coeffs[2 * i + 0] = (((uint16_t)(a[0] & 15)*Q) + 8) >> 4;
+                    r.coeffs[2 * i + 1] = (((uint16_t)(a[0] >> 4)*Q) + 8) >> 4;
+                    a += 1;
+                }
+            }
+
+            return r;
+        }
+    };
+
     }  // anonymous namespace
     }  // namespace Internal
 
@@ -1132,206 +1284,6 @@ namespace
     class Internal_Operation final
     {
     public:
-
-
-        /*************************************************
-        * Name:        polyvec_decompress
-        *
-        * Description: De-serialize and decompress vector of polynomials;
-        *              approximate inverse of polyvec_compress
-        *
-        * Arguments:   - polyvec *r:       pointer to output vector of polynomials
-        *              - const uint8_t *a: pointer to input byte array
-        *                                  (of length KYBER_POLYVECCOMPRESSEDBYTES)
-        **************************************************/
-        PolynomialVector polyvec_decompress( const uint8_t* a, size_t a_len )
-        {
-            PolynomialVector r(m_k);
-            unsigned int i, j, k;
-
-            if( a_len == m_k * 352 + m_poly_compressed_bytes )
-            {
-                uint16_t t[8];
-                for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < N / 8; j++ ) {
-                        t[0] = ( a[0] >> 0 ) | ( (uint16_t)a[1] << 8 );
-                        t[1] = ( a[1] >> 3 ) | ( (uint16_t)a[2] << 5 );
-                        t[2] = ( a[2] >> 6 ) | ( (uint16_t)a[3] << 2 ) | ( (uint16_t)a[4] << 10 );
-                        t[3] = ( a[4] >> 1 ) | ( (uint16_t)a[5] << 7 );
-                        t[4] = ( a[5] >> 4 ) | ( (uint16_t)a[6] << 4 );
-                        t[5] = ( a[6] >> 7 ) | ( (uint16_t)a[7] << 1 ) | ( (uint16_t)a[8] << 9 );
-                        t[6] = ( a[8] >> 2 ) | ( (uint16_t)a[9] << 6 );
-                        t[7] = ( a[9] >> 5 ) | ( (uint16_t)a[10] << 3 );
-                        a += 11;
-
-                        for ( k = 0; k < 8; k++ )
-                            r.vec[i].coeffs[8 * j + k] = ( (uint32_t)( t[k] & 0x7FF ) * Q + 1024 ) >> 11;
-                    }
-                }
-
-                return r;
-            }
-            else if( a_len == m_k * 320 + m_poly_compressed_bytes )
-            {
-                uint16_t t[4];
-                for ( i = 0; i < m_k; i++ ) {
-                    for ( j = 0; j < N / 4; j++ ) {
-                        t[0] = ( a[0] >> 0 ) | ( (uint16_t)a[1] << 8 );
-                        t[1] = ( a[1] >> 2 ) | ( (uint16_t)a[2] << 6 );
-                        t[2] = ( a[2] >> 4 ) | ( (uint16_t)a[3] << 4 );
-                        t[3] = ( a[3] >> 6 ) | ( (uint16_t)a[4] << 2 );
-                        a += 5;
-
-                        for ( k = 0; k < 4; k++ )
-                            r.vec[i].coeffs[4 * j + k] = ( (uint32_t)( t[k] & 0x3FF ) * Q + 512 ) >> 10;
-                    }
-                }
-
-                return r;
-            }
-            else
-            {
-                throw std::runtime_error( "KYBER_POLYVECCOMPRESSEDBYTES needs to be in {320*KYBER_K, 352*KYBER_K}" );
-            }
-        }
-
-
-
-
-
-
-        /*************************************************
-        * Name:        unpack_sk
-        *
-        * Description: De-serialize the secret key;
-        *              inverse of pack_sk
-        *
-        * Arguments:   - polyvec *sk:             pointer to output vector of
-        *                                         polynomials (secret key)
-        *              - const uint8_t *packedsk: pointer to input serialized secret key
-        **************************************************/
-        PolynomialVector unpack_sk( const std::vector<uint8_t> packedsk )
-        {
-            return PolynomialVector::frombytes( packedsk, m_k );
-        }
-
-
-        /*************************************************
-        * Name:        unpack_pk
-        *
-        * Description: De-serialize public key from a byte array;
-        *              approximate inverse of pack_pk
-        *
-        * Arguments:   - polyvec *pk:             pointer to output public-key
-        *                                         polynomial vector
-        *              - uint8_t *seed:           pointer to output seed to generate
-        *                                         matrix A
-        *              - const uint8_t *packedpk: pointer to input serialized public key
-        *              TO DO XXX
-        **************************************************/
-        PolynomialVector unpack_pk( std::vector<uint8_t>& seed, const std::vector<uint8_t>& packedpk )
-        {
-            auto pk = PolynomialVector::frombytes( packedpk, m_k );
-            for ( size_t i = 0; i < get_sym_bytes(); ++i )
-                seed[i] = packedpk[i + get_poly_vec_bytes()];
-            return pk;
-        }
-
-        /*************************************************
-        * Name:        poly_decompress
-        *
-        * Description: De-serialization and subsequent decompression of a polynomial;
-        *              approximate inverse of poly_compress
-        *
-        * Arguments:   - poly *r:          pointer to output polynomial
-        *              - const uint8_t *a: pointer to input byte array
-        *                                  (of length KYBER_POLYCOMPRESSEDBYTES bytes)
-        **************************************************/
-        void poly_decompress(Polynomial *r, const uint8_t a[], size_t aLength ) // TODO a[KYBER_POLYCOMPRESSEDBYTES]
-        {
-            unsigned int i;
-
-            if (aLength == 128)
-            {
-                for (i = 0;i < N / 2;i++) {
-                    r->coeffs[2 * i + 0] = (((uint16_t)(a[0] & 15)*Q) + 8) >> 4;
-                    r->coeffs[2 * i + 1] = (((uint16_t)(a[0] >> 4)*Q) + 8) >> 4;
-                    a += 1;
-                }
-            }
-            else if(aLength == 160)
-            {
-                unsigned int j;
-                uint8_t t[8];
-                for (i = 0;i < N / 8;i++) {
-                    t[0] = (a[0] >> 0);
-                    t[1] = (a[0] >> 5) | (a[1] << 3);
-                    t[2] = (a[1] >> 2);
-                    t[3] = (a[1] >> 7) | (a[2] << 1);
-                    t[4] = (a[2] >> 4) | (a[3] << 4);
-                    t[5] = (a[3] >> 1);
-                    t[6] = (a[3] >> 6) | (a[4] << 2);
-                    t[7] = (a[4] >> 3);
-                    a += 5;
-
-                    for (j = 0;j < 8;j++)
-                        r->coeffs[8 * i + j] = ((uint32_t)(t[j] & 31)*Q + 16) >> 5;
-                }
-            }
-            else
-            {
-                throw std::runtime_error("KYBER_POLYCOMPRESSEDBYTES needs to be in {128, 160}");
-            }
-        }
-        /*************************************************
-        * Name:        unpack_ciphertext
-        *
-        * Description: De-serialize and decompress ciphertext from a byte array;
-        *              approximate inverse of pack_ciphertext
-        *
-        * Arguments:   - polyvec *b:       pointer to the output vector of polynomials b
-        *              - poly *v:          pointer to the output polynomial v
-        *              - const uint8_t *c: pointer to the input serialized ciphertext
-        **************************************************/
-        PolynomialVector unpack_ciphertext( Polynomial* v, const uint8_t* c, size_t c_len )
-        {
-            auto b = polyvec_decompress( c, c_len );
-            poly_decompress( v, c + m_poly_vec_compressed_bytes, m_poly_compressed_bytes);
-
-            return b;
-        }
-
-        /*************************************************
-        * Name:        indcpa_dec
-        *
-        * Description: Decryption function of the CPA-secure
-        *              public-key encryption scheme underlying Kyber.
-        *
-        * Arguments:   - uint8_t *m:        pointer to output decrypted message
-        *                                   (of length KYBER_INDCPA_MSGBYTES)
-        *              - const uint8_t *c:  pointer to input ciphertext
-        *                                   (of length KYBER_INDCPA_BYTES)
-        *              - const uint8_t *sk: pointer to input secret key
-        *                                   (of length KYBER_INDCPA_SECRETKEYBYTES)
-        **************************************************/
-        void indcpa_dec( uint8_t m[32],  // TODO m[symbytes]
-            const uint8_t* c, size_t c_len,
-            const std::vector<uint8_t>& sk )
-        {
-            Polynomial v;
-
-            auto bp = unpack_ciphertext( &v, c, c_len );
-            auto skpv = unpack_sk( sk );
-
-            bp.ntt();
-            auto mp = PolynomialVector::pointwise_acc_montgomery(skpv, bp);
-            mp.invntt_tomont();
-
-            mp -= v;
-            mp.reduce();
-            mp.tomsg(m);
-        }
-
         Internal_Operation( KyberMode mode ) : m_mode(mode)
         {
             switch ( mode.mode )
@@ -1421,26 +1373,6 @@ namespace Botan
     namespace {
 
     /*************************************************
-    * Name:        pack_ciphertext
-    *
-    * Description: Serialize the ciphertext as concatenation of the
-    *              compressed and serialized vector of polynomials b
-    *              and the compressed and serialized polynomial v
-    *
-    * Arguments:   uint8_t *r: pointer to the output serialized ciphertext
-    *              poly *pk:   pointer to the input vector of polynomials b
-    *              poly *v:    pointer to the input polynomial v
-    **************************************************/
-    secure_vector<uint8_t> pack_ciphertext(Internal::PolynomialVector &b, Internal::Polynomial &v, const KyberMode &mode)
-    {
-        auto ct = b.compress();
-        const auto p = v.compress(mode.k());
-        ct.insert(ct.end(), p.begin(), p.end());
-
-        return ct;
-    }
-
-    /*************************************************
     * Name:        indcpa_enc
     *
     * Description: Encryption function of the CPA-secure
@@ -1486,7 +1418,7 @@ namespace Botan
         bp.reduce();
         v.reduce();
 
-        return pack_ciphertext(bp, v, mode);
+        return Internal::Ciphertext(std::move(bp), std::move(v), mode).to_bytes();
     }
     }
 
@@ -1508,19 +1440,6 @@ namespace Botan
         {
             BOTAN_UNUSED(salt, salt_len);
 
-            secure_vector<uint8_t> plaintext;
-            plaintext.resize(desired_shared_key_len);
-            secure_vector<uint8_t> ciphertext = kyber_encrypt(plaintext, rng);
-
-            out_shared_key.swap(plaintext);
-            out_encapsulated_key.swap(ciphertext);
-        }
-
-    private:
-
-        secure_vector<uint8_t> kyber_encrypt(
-            secure_vector<uint8_t>& sharedSecret, RandomNumberGenerator& rng)
-        {
             const auto sym_bytes = KyberMode::kSymBytes;
             secure_vector<uint8_t> buf( sym_bytes );
             rng.randomize( buf.data(), buf.size() );
@@ -1541,7 +1460,6 @@ namespace Botan
                 G = HashFunction::create( "SHA-512" );
             }
 
-
             secure_vector<uint8_t> secBuf;
             secure_vector<uint8_t> secKr;
 
@@ -1556,23 +1474,21 @@ namespace Botan
             G->update(tmp);
             secKr = G->final();
 
-
             // coins are in kr+KYBER_SYMBYTES
-            auto ct = indcpa_enc(secBuf, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
+            out_encapsulated_key = indcpa_enc(secBuf, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
 
             // overwrite coins in kr with H(c)
-            H->update(ct);
+            H->update(out_encapsulated_key);
             tmp = H->final();
 
             std::copy(tmp.begin(), tmp.end(), secKr.begin() + sym_bytes);
 
             // hash concatenation of pre-k and H(c) to k
             KDF->update(secKr.data(), 2 * sym_bytes );
-            sharedSecret = KDF->final();
-
-            return ct;
+            out_shared_key = KDF->final();
         }
 
+    private:
         const Kyber_PublicKey& m_key;
     };
 
@@ -1591,23 +1507,10 @@ namespace Botan
         {
             BOTAN_UNUSED(salt, salt_len);
 
-            secure_vector<uint8_t> plaintext;
-            plaintext.resize(desired_shared_key_len);
-            kyber_decrypt(plaintext, encap_key, len_encap_key, m_key.private_key_bits());
-
-            return plaintext;
-        }
-
-    private:
-
-        void kyber_decrypt(secure_vector<uint8_t>& ss,
-            const uint8_t* ct, size_t ct_len,
-            secure_vector<uint8_t> sk)
-        {
             size_t i;
             int fail;
             uint8_t buf[2 * 32];
-            const auto sk_unlocked = unlock(sk);
+            const auto sk_unlocked = unlock(m_key.private_key_bits());
             const auto sk_data = sk_unlocked.data();
             Botan::Internal::Internal_Operation Internal( m_key.get_mode() );
             const std::vector<uint8_t> pk( sk_unlocked.begin() + Internal.get_poly_vec_bytes(), sk_unlocked.end() );
@@ -1630,7 +1533,9 @@ namespace Botan
             secure_vector<uint8_t> secBuf;
             secure_vector<uint8_t> secKr;
 
-            Internal.indcpa_dec(buf, ct, ct_len, sk_unlocked );
+            const auto shared_secret = indcpa_dec(encap_key, len_encap_key);
+            std::copy(shared_secret.begin(), shared_secret.end(), std::begin(buf));
+
             // Use secBuf. Insert data from buf
             const auto sym_bytes = Internal.get_sym_bytes();
             secBuf.insert(secBuf.begin(), buf, buf + 2 * sym_bytes);
@@ -1644,16 +1549,14 @@ namespace Botan
             G->update(secBuf);
             secKr = G->final();
 
-
-
             /* coins are in kr+KYBER_SYMBYTES */
             auto cmp = indcpa_enc({secBuf.begin(), secBuf.begin() + sym_bytes}, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
 
             const auto ciphertext_bytes = Internal.get_ciphertext_bytes();
-            fail = !constant_time_compare(ct, cmp.data(), ciphertext_bytes);
+            fail = !constant_time_compare(encap_key, cmp.data(), ciphertext_bytes);
 
             /* overwrite coins in kr with H(c) */
-            H->update(ct, ciphertext_bytes );
+            H->update(encap_key, ciphertext_bytes );
             auto tmp = H->final();
             secure_vector<uint8_t> secKrFinal{ secKr.begin(), secKr.begin() + sym_bytes };
             secKrFinal.insert(secKrFinal.end(),tmp.begin(),tmp.end());
@@ -1662,9 +1565,37 @@ namespace Botan
             /* hash concatenation of pre-k and H(c) to k */
             /* Overwrite pre-k with z on re-encryption failure */
             fail ? H->update(secKrFinalFail) : KDF->update(secKrFinal);
-            ss = KDF->final();
+            return KDF->final();
         }
 
+    private:
+        /*************************************************
+        * Name:        indcpa_dec
+        *
+        * Description: Decryption function of the CPA-secure
+        *              public-key encryption scheme underlying Kyber.
+        *
+        * Arguments:   - uint8_t *m:        pointer to output decrypted message
+        *                                   (of length KYBER_INDCPA_MSGBYTES)
+        *              - const uint8_t *c:  pointer to input ciphertext
+        *                                   (of length KYBER_INDCPA_BYTES)
+        *              - const uint8_t *sk: pointer to input secret key
+        *                                   (of length KYBER_INDCPA_SECRETKEYBYTES)
+        **************************************************/
+        secure_vector<uint8_t> indcpa_dec(const uint8_t* c, size_t c_len)
+        {
+            auto ct = Internal::Ciphertext::from_bytes(Botan::secure_vector<uint8_t>(c, c + c_len), m_key.get_mode());
+
+            ct.b.ntt();
+            auto mp = Internal::PolynomialVector::pointwise_acc_montgomery(m_key.m_private->polynomials(), ct.b);
+            mp.invntt_tomont();
+
+            mp -= ct.v;
+            mp.reduce();
+            return mp.to_message();
+        }
+
+    private:
         const Kyber_PrivateKey& m_key;
     };
 
@@ -1774,8 +1705,6 @@ namespace Botan
     Kyber_PrivateKey::Kyber_PrivateKey( RandomNumberGenerator& rng, KyberMode mode )
         : Kyber_PublicKey(mode)
     {
-        Botan::Internal::Internal_Operation kyberIntOps( mode );
-
         // TODO: do we actually need to hash the random output?
         constexpr static auto rand_size = 32;
         byte rand[rand_size];
@@ -1809,7 +1738,7 @@ namespace Botan
         auto pk_hash = hash4->final_stdvec();
 
         /* Value z for pseudo-random output on reject */
-        auto z = rng.random_vec(kyberIntOps.get_sym_bytes());
+        auto z = rng.random_vec(KyberMode::kSymBytes);
 
         m_private = std::make_shared<Kyber_PrivateKeyInternal>(std::move(skpv), std::move(pk_hash), std::move(z));
     }
