@@ -115,6 +115,8 @@ namespace Botan {
                                         const std::string& params,
                                         const std::string& provider) const override;
     private:
+        friend class Kyber_KEM_Decryptor;
+
         std::shared_ptr<Kyber_PrivateKeyInternal> m_private;
     };
 
