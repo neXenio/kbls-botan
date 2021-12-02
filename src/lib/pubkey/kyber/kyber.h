@@ -39,6 +39,18 @@ namespace Botan {
         size_t eta1() const { return m_eta1; }
         bool   is_90s() const { return m_90s;}
 
+        std::unique_ptr<HashFunction> H() const {
+            return (is_90s())
+                ? HashFunction::create( "SHA-256" )
+                : HashFunction::create("SHA-3(256)");
+        }
+
+        std::unique_ptr<HashFunction> G() const {
+            return (is_90s())
+                ? HashFunction::create("SHA-512")
+                : HashFunction::create("SHA-3(512)");
+        }
+
     public:
         Mode mode;
 
@@ -74,8 +86,6 @@ namespace Botan {
         size_t estimated_strength() const override;
 
         std::vector<uint8_t> public_key_bits() const override;
-
-        KyberMode get_mode() const;
 
         bool check_key( RandomNumberGenerator&, bool ) const override;
 

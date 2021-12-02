@@ -1261,111 +1261,20 @@ namespace
 
     class Kyber_PrivateKeyInternal {
     public:
-        Kyber_PrivateKeyInternal(Internal::PolynomialVector polynomials, std::vector<uint8_t> pubkey_hash, secure_vector<uint8_t> z)
+        Kyber_PrivateKeyInternal(Internal::PolynomialVector polynomials, secure_vector<uint8_t> z)
             : m_polynomials(std::move(polynomials))
-            , m_public_key_hash(std::move(pubkey_hash))
             , m_z(std::move(z)) {}
 
         Internal::PolynomialVector& polynomials() { return m_polynomials; }
-        const std::vector<uint8_t>& public_key_hash() const { return m_public_key_hash; }
         const secure_vector<uint8_t>& z() const { return m_z; }
 
         Kyber_PrivateKeyInternal() = delete;
 
     private:
         Internal::PolynomialVector m_polynomials;
-        std::vector<uint8_t>       m_public_key_hash;
         secure_vector<uint8_t>     m_z;
     };
 
-    namespace Internal {
-    namespace {
-
-    class Internal_Operation final
-    {
-    public:
-        Internal_Operation( KyberMode mode ) : m_mode(mode)
-        {
-            switch ( mode.mode )
-            {
-            case KyberMode::Kyber512:
-            case KyberMode::Kyber512_90s:
-                m_k = 2;
-                m_poly_vec_compressed_bytes = m_k * 320;
-                m_poly_compressed_bytes = 128;
-                m_KYBER_ETA1 = 3;
-                break;
-            case KyberMode::Kyber768:
-            case KyberMode::Kyber768_90s:
-                m_k = 3;
-                m_poly_vec_compressed_bytes = m_k * 320;
-                m_poly_compressed_bytes = 128;
-                m_KYBER_ETA1 = 2;
-                break;
-            case KyberMode::Kyber1024:
-            case KyberMode::Kyber1024_90s:
-                m_k = 4;
-                m_poly_vec_compressed_bytes = m_k * 352;
-                m_poly_compressed_bytes = 160;
-                m_KYBER_ETA1 = 2;
-                break;
-            default:
-                throw std::runtime_error( "invalid kyber mode" );
-                break;
-            }
-            if( mode.mode == KyberMode::Kyber512_90s || mode.mode == KyberMode::Kyber768_90s || mode.mode == KyberMode::Kyber1024_90s )
-            {
-                m_kyber_90s = true;
-                m_XOF_BLOCKBYTES = m_XOF_BLOCKBYTES_90s;
-            }
-            else
-            {
-                m_kyber_90s = false;
-                m_XOF_BLOCKBYTES = m_XOF_BLOCKBYTES_non_90s;
-            }
-
-
-            m_poly_vec_bytes = m_k * m_poly_bytes;
-            m_public_key_bytes = m_poly_vec_bytes + m_sym_bytes;
-            m_secret_key_bytes = m_poly_vec_bytes + m_public_key_bytes + 2 * m_sym_bytes;
-            m_ciphertext_bytes = m_poly_vec_compressed_bytes + m_poly_compressed_bytes;
-        }
-
-        size_t get_public_key_bytes() const { return m_public_key_bytes; }
-        size_t get_poly_vec_bytes() const { return m_poly_vec_bytes; }
-        size_t get_poly_bytes() const { return m_poly_bytes; }
-        size_t get_secret_key_bytes() const { return m_secret_key_bytes; }
-        size_t get_sym_bytes() const { return m_sym_bytes; }
-        size_t get_ciphertext_bytes() const { return m_ciphertext_bytes; }
-        size_t is_90s() const { return m_kyber_90s; }
-
-
-
-        constexpr static size_t m_sym_bytes = 32;
-        // constexpr static size_t m_ss_bytes = 32;
-
-        constexpr static size_t m_poly_bytes = 384;
-
-        // constexpr static size_t m_ETA2 = 2;
-        constexpr static size_t m_XOF_BLOCKBYTES_non_90s  = 168; // SHAKE128 Rate
-        constexpr static size_t m_XOF_BLOCKBYTES_90s = 64; // AES256CTR_BLOCKBYTES
-
-        size_t m_k;
-        size_t m_poly_vec_bytes;
-        size_t m_poly_vec_compressed_bytes;
-        size_t m_poly_compressed_bytes;
-        size_t m_public_key_bytes;
-        size_t m_secret_key_bytes;
-        size_t m_ciphertext_bytes;
-        size_t m_XOF_BLOCKBYTES;
-        size_t m_KYBER_ETA1;
-        bool m_kyber_90s;
-
-        KyberMode m_mode;
-    };
-
-}
-}
 }
 
 namespace Botan
@@ -1422,14 +1331,12 @@ namespace Botan
     }
     }
 
-
-
     class Kyber_KEM_Encryptor final : public PK_Ops::KEM_Encryption
     {
     public:
 
-        Kyber_KEM_Encryptor(const Kyber_PublicKey& key) :
-            KEM_Encryption(), m_key(key) {}
+        Kyber_KEM_Encryptor(const Kyber_PublicKey& key, const KyberMode &mode) :
+            KEM_Encryption(), m_key(key), m_mode(mode) {}
 
         void kem_encrypt(secure_vector<uint8_t>& out_encapsulated_key,
             secure_vector<uint8_t>& out_shared_key,
@@ -1438,66 +1345,46 @@ namespace Botan
             const uint8_t salt[],
             size_t salt_len) override
         {
-            BOTAN_UNUSED(salt, salt_len);
-
-            const auto sym_bytes = KyberMode::kSymBytes;
-            secure_vector<uint8_t> buf( sym_bytes );
-            rng.randomize( buf.data(), buf.size() );
-            /* Don't release system RNG output */
+            BOTAN_UNUSED(desired_shared_key_len, salt, salt_len);
 
             // naming from kyber spec
-            std::unique_ptr<HashFunction> H;
-            std::unique_ptr<HashFunction> G;
-            std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
-            if( !m_key.get_mode().is_90s() )
-            {
-                H = HashFunction::create( "SHA-3(256)" );
-                G = HashFunction::create( "SHA-3(512)" );
-            }
-            else
-            {
-                H = HashFunction::create( "SHA-256" );
-                G = HashFunction::create( "SHA-512" );
-            }
+            auto H   = m_mode.H();
+            auto G   = m_mode.G();
+            auto KDF = HashFunction::create("SHAKE-256");
 
-            secure_vector<uint8_t> secBuf;
-            secure_vector<uint8_t> secKr;
-
-            H->update(buf);
-            secBuf = H->final();
+            // TODO: do we actually need to hash this?
+            // input is 32 bytes from RNG, output is... well 32 bytes from PRF?
+            // KAT tests need it obviously, but does the algorithm depend on it?
+            H->update(rng.random_vec(KyberMode::kSymBytes));
+            const auto shared_secret = H->final();
 
             // Multitarget countermeasure for coins + contributory KEM
-            H->update(m_key.public_key_bits());
-            auto tmp = H->final();
+            G->update(shared_secret);
+            G->update(H->process(m_key.public_key_bits()));
+            const auto g_out = G->final();
 
-            G->update(secBuf);
-            G->update(tmp);
-            secKr = G->final();
+            const auto middle = G->output_length() / 2;
+            const auto lower_g_out = secure_vector<uint8_t>(g_out.begin(), g_out.begin() + middle);
+            const auto upper_g_out = secure_vector<uint8_t>(g_out.begin() + middle, g_out.end());
 
-            // coins are in kr+KYBER_SYMBYTES
-            out_encapsulated_key = indcpa_enc(secBuf, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
+            out_encapsulated_key = indcpa_enc(shared_secret, upper_g_out, m_key.m_public, m_mode);
 
-            // overwrite coins in kr with H(c)
-            H->update(out_encapsulated_key);
-            tmp = H->final();
-
-            std::copy(tmp.begin(), tmp.end(), secKr.begin() + sym_bytes);
-
-            // hash concatenation of pre-k and H(c) to k
-            KDF->update(secKr.data(), 2 * sym_bytes );
+            KDF->update(lower_g_out);
+            KDF->update(H->process(out_encapsulated_key));
             out_shared_key = KDF->final();
         }
 
     private:
         const Kyber_PublicKey& m_key;
+        const KyberMode &m_mode;
     };
 
     class Kyber_KEM_Decryptor final : public PK_Ops::KEM_Decryption
     {
     public:
 
-        Kyber_KEM_Decryptor(const Kyber_PrivateKey& key) :
-            KEM_Decryption(), m_key(key) {}
+        Kyber_KEM_Decryptor(const Kyber_PrivateKey& key, const KyberMode &mode) :
+            KEM_Decryption(), m_key(key), m_mode(mode) {}
 
         secure_vector<uint8_t> kem_decrypt(const uint8_t encap_key[],
             size_t len_encap_key,
@@ -1505,66 +1392,41 @@ namespace Botan
             const uint8_t salt[],
             size_t salt_len) override
         {
-            BOTAN_UNUSED(salt, salt_len);
-
-            size_t i;
-            int fail;
-            uint8_t buf[2 * 32];
-            const auto sk_unlocked = unlock(m_key.private_key_bits());
-            const auto sk_data = sk_unlocked.data();
-            Botan::Internal::Internal_Operation Internal( m_key.get_mode() );
-            const std::vector<uint8_t> pk( sk_unlocked.begin() + Internal.get_poly_vec_bytes(), sk_unlocked.end() );
+            BOTAN_UNUSED(desired_shared_key_len, salt, salt_len);
 
             // naming from kyber spec
-            std::unique_ptr<HashFunction> H;
-            std::unique_ptr<HashFunction> G;
-            std::unique_ptr<HashFunction> KDF( HashFunction::create( "SHAKE-256" ) );
-            if ( !Internal.is_90s() )
+            auto H   = m_mode.H();
+            auto G   = m_mode.G();
+            auto KDF = HashFunction::create("SHAKE-256");
+
+            const auto shared_secret = indcpa_dec(encap_key, len_encap_key);
+
+            /* Multitarget countermeasure for coins + contributory KEM */
+            G->update(shared_secret);
+            G->update(H->process(m_key.public_key_bits()));
+
+            const auto g_out = G->final();
+
+            const auto middle = G->output_length() / 2;
+            const auto lower_g_out = secure_vector<uint8_t>(g_out.begin(), g_out.begin() + middle);
+            const auto upper_g_out = secure_vector<uint8_t>(g_out.begin() + middle, g_out.end());
+
+            H->update(encap_key, len_encap_key);
+
+            const auto cmp = indcpa_enc(shared_secret, upper_g_out, m_key.m_public, m_mode);
+            BOTAN_ASSERT(len_encap_key == cmp.size(), "output of indcpa_enc has unexpected length");
+
+            if (constant_time_compare(encap_key, cmp.data(), len_encap_key))
             {
-                H = HashFunction::create( "SHA-3(256)" );
-                G = HashFunction::create( "SHA-3(512)" );
+                KDF->update(lower_g_out);
+                KDF->update(H->final());
             }
             else
             {
-                H = HashFunction::create( "SHA-256" );
-                G = HashFunction::create( "SHA-512" );
+                // TODO: do we need to finalize this hash?
+                H->update(m_key.m_private->z());
             }
 
-            secure_vector<uint8_t> secBuf;
-            secure_vector<uint8_t> secKr;
-
-            const auto shared_secret = indcpa_dec(encap_key, len_encap_key);
-            std::copy(shared_secret.begin(), shared_secret.end(), std::begin(buf));
-
-            // Use secBuf. Insert data from buf
-            const auto sym_bytes = Internal.get_sym_bytes();
-            secBuf.insert(secBuf.begin(), buf, buf + 2 * sym_bytes);
-
-            /* Multitarget countermeasure for coins + contributory KEM */
-            const auto secret_key_bytes = Internal.get_secret_key_bytes();
-            for (i = 0; i < sym_bytes; i++)
-            {
-                secBuf.at(sym_bytes + i) = sk_unlocked.at( secret_key_bytes - 2 * sym_bytes + i);
-            }
-            G->update(secBuf);
-            secKr = G->final();
-
-            /* coins are in kr+KYBER_SYMBYTES */
-            auto cmp = indcpa_enc({secBuf.begin(), secBuf.begin() + sym_bytes}, {secKr.begin() + sym_bytes, secKr.end()}, m_key.m_public, m_key.get_mode());
-
-            const auto ciphertext_bytes = Internal.get_ciphertext_bytes();
-            fail = !constant_time_compare(encap_key, cmp.data(), ciphertext_bytes);
-
-            /* overwrite coins in kr with H(c) */
-            H->update(encap_key, ciphertext_bytes );
-            auto tmp = H->final();
-            secure_vector<uint8_t> secKrFinal{ secKr.begin(), secKr.begin() + sym_bytes };
-            secKrFinal.insert(secKrFinal.end(),tmp.begin(),tmp.end());
-
-            secure_vector<uint8_t> secKrFinalFail( sk_data + secret_key_bytes - sym_bytes, sk_data + secret_key_bytes);
-            /* hash concatenation of pre-k and H(c) to k */
-            /* Overwrite pre-k with z on re-encryption failure */
-            fail ? H->update(secKrFinalFail) : KDF->update(secKrFinal);
             return KDF->final();
         }
 
@@ -1584,7 +1446,7 @@ namespace Botan
         **************************************************/
         secure_vector<uint8_t> indcpa_dec(const uint8_t* c, size_t c_len)
         {
-            auto ct = Internal::Ciphertext::from_bytes(Botan::secure_vector<uint8_t>(c, c + c_len), m_key.get_mode());
+            auto ct = Internal::Ciphertext::from_bytes(Botan::secure_vector<uint8_t>(c, c + c_len), m_mode);
 
             ct.b.ntt();
             auto mp = Internal::PolynomialVector::pointwise_acc_montgomery(m_key.m_private->polynomials(), ct.b);
@@ -1597,8 +1459,8 @@ namespace Botan
 
     private:
         const Kyber_PrivateKey& m_key;
+        const KyberMode &m_mode;
     };
-
 
     KyberMode::KyberMode(const Mode mode)
         : mode(mode)
@@ -1679,7 +1541,7 @@ namespace Botan
     }
 
     size_t Kyber_PublicKey::key_length() const { return Internal::Polynomial::kSerializedByteCount * k() + KyberMode::kSeedLength; }
-    KyberMode Kyber_PublicKey::get_mode() const { return m_public->mode(); }
+
     size_t Kyber_PublicKey::k() const {
         return m_mode.k();
     }
@@ -1706,15 +1568,12 @@ namespace Botan
         : Kyber_PublicKey(mode)
     {
         // TODO: do we actually need to hash the random output?
-        constexpr static auto rand_size = 32;
-        byte rand[rand_size];
-        rng.randomize( rand, rand_size );
-        std::unique_ptr<HashFunction> hash3( HashFunction::create( "SHA-3(512)" ) );
-        hash3->update( rand, rand_size );
-        auto seed0 = hash3->final();
+        auto h = HashFunction::create("SHA-3(512)");
+        auto seed = h->process(rng.random_vec(KyberMode::kSymBytes));
 
-        std::vector<uint8_t>   seed1(seed0.begin(),      seed0.begin() + 32);
-        secure_vector<uint8_t> seed2(seed0.begin() + 32, seed0.begin() + 64);
+        const auto middle = h->output_length() / 2;
+        std::vector<uint8_t>   seed1(seed.begin(),          seed.begin() + middle);
+        secure_vector<uint8_t> seed2(seed.begin() + middle, seed.end());
 
         auto a    = Internal::PolynomialMatrix::generate(seed1, false, mode);
         auto skpv = Internal::PolynomialVector::getnoise_eta1(seed2, 0, mode);
@@ -1728,19 +1587,8 @@ namespace Botan
         pkpv += e;
         pkpv.reduce();
 
-        m_public = std::make_shared<Kyber_PublicKeyInternal>(mode, std::move(pkpv), std::move(seed1));
-
-        auto sk = skpv.tobytes<secure_vector<uint8_t>>(mode.k());
-        auto pk = public_key_bits();
-
-        std::unique_ptr<HashFunction> hash4(HashFunction::create("SHA-3(256)"));
-        hash4->update(pk);
-        auto pk_hash = hash4->final_stdvec();
-
-        /* Value z for pseudo-random output on reject */
-        auto z = rng.random_vec(KyberMode::kSymBytes);
-
-        m_private = std::make_shared<Kyber_PrivateKeyInternal>(std::move(skpv), std::move(pk_hash), std::move(z));
+        m_public  = std::make_shared<Kyber_PublicKeyInternal>(mode, std::move(pkpv), std::move(seed1));
+        m_private = std::make_shared<Kyber_PrivateKeyInternal>(std::move(skpv), rng.random_vec(KyberMode::kSymBytes));
     }
 
     Kyber_PrivateKey::Kyber_PrivateKey( secure_vector<uint8_t> sk, std::vector<uint8_t> pk, KyberMode mode )
@@ -1751,7 +1599,7 @@ namespace Botan
         const auto skpv_length    = Internal::Polynomial::kSerializedByteCount * k();
         const auto pk_length      = Internal::Polynomial::kSerializedByteCount * k() + KyberMode::kSeedLength;
         const auto pk_hash_length = 32;
-        const auto z_length       = 32;
+        const auto z_length       = KyberMode::kSymBytes;
         const auto private_key_length = skpv_length + pk_length + pk_hash_length + z_length;
 
         if (private_key_length != sk.size()) {
@@ -1759,17 +1607,20 @@ namespace Botan
         }
 
         const secure_vector<uint8_t> skpv(sk.begin(), sk.begin() + skpv_length);
-        std::vector<uint8_t>   pk_hash(sk.begin() + skpv_length + pk_length, sk.begin() + skpv_length + pk_length + pk_hash_length);
+        // skips the public key
         secure_vector<uint8_t> z(sk.end() - z_length, sk.end());
 
-        m_private = std::make_shared<Kyber_PrivateKeyInternal>(Internal::PolynomialVector::frombytes(skpv, mode.k()), std::move(pk_hash), std::move(z));
+        m_private = std::make_shared<Kyber_PrivateKeyInternal>(Internal::PolynomialVector::frombytes(skpv, mode.k()), std::move(z));
     }
 
     secure_vector<uint8_t> Kyber_PrivateKey::private_key_bits() const
     {
-        auto pk = public_key_bits();
-        const auto& pk_hash = m_private->public_key_hash();
         const auto& z = m_private->z();
+
+        auto pk = public_key_bits();
+        std::unique_ptr<HashFunction> h(HashFunction::create("SHA-3(256)"));
+        h->update(pk);
+        const auto pk_hash = h->final_stdvec();
 
         auto sk = m_private->polynomials().tobytes<secure_vector<uint8_t>>(m_mode.k());
         sk.insert(sk.end(), pk.begin(), pk.end());
@@ -1784,24 +1635,17 @@ namespace Botan
             const std::string& params,
             const std::string& provider) const
     {
-        BOTAN_UNUSED(rng, params);
-
-        if (provider == "base" || provider.empty())
-            return std::unique_ptr<PK_Ops::KEM_Encryption>(new Kyber_KEM_Encryptor(*this));
-        throw Provider_Not_Found(algo_name(), provider);
+        BOTAN_UNUSED(rng, params, provider);
+        return std::unique_ptr<PK_Ops::KEM_Encryption>(new Kyber_KEM_Encryptor(*this, m_mode));
     }
 
-    // decryptor
     std::unique_ptr<PK_Ops::KEM_Decryption>
         Kyber_PrivateKey::create_kem_decryption_op( RandomNumberGenerator& rng,
             const std::string& params,
             const std::string& provider ) const
     {
-        BOTAN_UNUSED(rng, params);
-
-        if ( provider == "base" || provider.empty() )
-            return std::unique_ptr<PK_Ops::KEM_Decryption>( new Kyber_KEM_Decryptor( *this ) );
-        throw Provider_Not_Found( algo_name(), provider );
+        BOTAN_UNUSED(rng, params, provider);
+        return std::unique_ptr<PK_Ops::KEM_Decryption>( new Kyber_KEM_Decryptor(*this, m_mode));
     }
 
     bool Kyber_PrivateKey::check_key( RandomNumberGenerator& rng, bool ) const
