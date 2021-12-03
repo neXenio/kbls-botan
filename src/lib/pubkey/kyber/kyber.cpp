@@ -402,7 +402,7 @@ class Polynomial
 
         if (buf.size() < (3 * r.coeffs.size() / 4))
         {
-            throw std::runtime_error("Cannot cbd3 because buf incompatible buffer length!");
+            throw Botan::Invalid_Argument("Cannot cbd3 because buf incompatible buffer length!");
         }
 
         // Note: Botan::load_le<> does not support loading a 3-byte value
