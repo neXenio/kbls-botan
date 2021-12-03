@@ -11,55 +11,13 @@
 #include <botan/internal/pk_ops_impl.h>
 
 namespace Botan {
-
-    class KyberMode
-    {
-    public:
-        static constexpr size_t kSymBytes = 32;
-        static constexpr size_t kSeedLength = kSymBytes;
-        static constexpr size_t kShake256Rate = 136*8;
-        static constexpr size_t kShake128Rate = 168*8;
-
-    public:
-        enum Mode {
-            Kyber512,
-            Kyber512_90s,
-            Kyber768,
-            Kyber768_90s,
-            Kyber1024,
-            Kyber1024_90s
-        };
-
-    public:
-        KyberMode(const Mode mode);
-
-        size_t k() const { return m_k; }
-        size_t xof_block_bytes() const { return m_xof_block_bytes; }
-        size_t estimated_strength() const { return m_nist_strength; }
-        size_t eta1() const { return m_eta1; }
-        bool   is_90s() const { return m_90s;}
-
-        std::unique_ptr<HashFunction> H() const {
-            return (is_90s())
-                ? HashFunction::create( "SHA-256" )
-                : HashFunction::create("SHA-3(256)");
-        }
-
-        std::unique_ptr<HashFunction> G() const {
-            return (is_90s())
-                ? HashFunction::create("SHA-512")
-                : HashFunction::create("SHA-3(512)");
-        }
-
-    public:
-        Mode mode;
-
-    private:
-        size_t m_k;
-        size_t m_xof_block_bytes;
-        size_t m_nist_strength;
-        size_t m_eta1;
-        bool   m_90s;
+    enum class KyberMode {
+        Kyber512,
+        Kyber512_90s,
+        Kyber768,
+        Kyber768_90s,
+        Kyber1024,
+        Kyber1024_90s
     };
 
     class Kyber_PublicKeyInternal;
@@ -95,15 +53,13 @@ namespace Botan {
                                     const std::string& provider) const override;
 
     protected:
-        Kyber_PublicKey(KyberMode mode) : m_mode(std::move(mode)) {};
+        Kyber_PublicKey() {};
 
-        size_t k() const;
-
+    protected:
         friend class Kyber_KEM_Encryptor;
         friend class Kyber_KEM_Decryptor;
 
         std::shared_ptr<Kyber_PublicKeyInternal> m_public;
-        KyberMode m_mode;
     };
 
 
