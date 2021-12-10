@@ -26,7 +26,7 @@ namespace Botan_Tests {
 #define RNG_BAD_OUTBUF  -2
 #define RNG_BAD_REQ_LEN -3
 
-        void    AES256_ECB( unsigned char* key, unsigned char* ctr, unsigned char* buffer );
+        void AES256_ECB( unsigned char* key, unsigned char* ctr, unsigned char* buffer );
 
         void AES256_CTR_DRBG_Update( unsigned char* provided_data, unsigned char* Key, unsigned char* V )
         {
@@ -104,6 +104,7 @@ namespace Botan_Tests {
 
             Kyber_Test_RNG( const std::vector<uint8_t>& seed )
             {
+                clear();
                 add_entropy( seed.data(), seed.size() );
             }
 
@@ -123,7 +124,7 @@ namespace Botan_Tests {
                 DRBG_ctx.reseed_counter = 1;
             }
 
-            int randombytes( unsigned char* x, unsigned long long xlen )
+            int randombytes( unsigned char* x, size_t xlen )
             {
                 unsigned char   block[16];
                 int             i = 0;
@@ -232,11 +233,20 @@ namespace Botan_Tests {
             case Botan::KyberMode::Kyber512:
                 mode_str = "Kyber512";
                 break;
+                case Botan::KyberMode::Kyber512_90s:
+                mode_str = "Kyber512_90s";
+                break;
             case Botan::KyberMode::Kyber768:
                 mode_str = "Kyber768";
                 break;
+            case Botan::KyberMode::Kyber768_90s:
+                mode_str = "Kyber768_90s";
+                break;
             case Botan::KyberMode::Kyber1024:
                 mode_str = "Kyber1024";
+                break;
+            case Botan::KyberMode::Kyber1024_90s:
+                mode_str = "Kyber1024_90s";
                 break;
             default:
                 mode_str = "unknown Kyber mode";
@@ -317,6 +327,45 @@ namespace Botan_Tests {
             }
         };
         BOTAN_REGISTER_TEST( "kyber", "kyber_kat_1024", KYBER_KAT_1024 );
+
+        class KYBER_KAT_512_90s final : public Text_Based_Test
+        {
+        public:
+            KYBER_KAT_512_90s() : Text_Based_Test( "pubkey/kyber_512_90s.vec", "count,seed,pk,sk,ct,ss" ) {}
+
+
+            Test::Result run_one_test( const std::string&, const VarMap& vars ) override
+            {
+                return run_kyber_test_internal( vars, Botan::KyberMode::Kyber512_90s );
+            }
+        };
+        BOTAN_REGISTER_TEST( "kyber", "kyber_kat_512_90s", KYBER_KAT_512_90s );
+
+        class KYBER_KAT_768_90s final : public Text_Based_Test
+        {
+        public:
+            KYBER_KAT_768_90s() : Text_Based_Test( "pubkey/kyber_768_90s.vec", "count,seed,pk,sk,ct,ss" ) {}
+
+
+            Test::Result run_one_test( const std::string&, const VarMap& vars ) override
+            {
+                return run_kyber_test_internal( vars, Botan::KyberMode::Kyber768_90s );
+            }
+        };
+        BOTAN_REGISTER_TEST( "kyber", "kyber_kat_768_90s", KYBER_KAT_768_90s );
+
+        class KYBER_KAT_1024_90s final : public Text_Based_Test
+        {
+        public:
+            KYBER_KAT_1024_90s() : Text_Based_Test( "pubkey/kyber_1024_90s.vec", "count,seed,pk,sk,ct,ss" ) {}
+
+
+            Test::Result run_one_test( const std::string&, const VarMap& vars ) override
+            {
+                return run_kyber_test_internal( vars, Botan::KyberMode::Kyber1024_90s );
+            }
+        };
+        BOTAN_REGISTER_TEST( "kyber", "kyber_kat_1024_90s", KYBER_KAT_1024_90s );
 #endif
 
     }
