@@ -148,6 +148,10 @@ class KyberConstants
     bool m_90s;
 };
 
+// declarations required pre-C++17 (at least with GCC)
+constexpr int16_t KyberConstants::zetas[128];
+constexpr int16_t KyberConstants::zetas_inv[128];
+
 /*************************************************
  * Name:        csubq
  *
