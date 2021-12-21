@@ -5,7 +5,6 @@
 #include <botan/rng.h>
 #include <botan/stream_cipher.h>
 
-#include <botan/internal/sha3.h>
 #include <botan/internal/shake.h>
 #include <botan/internal/loadstor.h>
 
@@ -42,9 +41,6 @@ class KyberConstants
         1571, 205,  2918, 1542, 2721, 2597, 2312, 681,  130,  1602, 1871, 829,  2946, 3065, 1325, 2756,
         1861, 1474, 1202, 2367, 3147, 1752, 2707, 171,  3127, 3042, 1907, 1836, 1517, 359,  758,  1441};
 
-    static constexpr size_t kShake256Rate = 136 * 8;
-    static constexpr size_t kShake128Rate = 168 * 8;
-
     static constexpr size_t kSymBytes = 32;
     static constexpr size_t kSeedLength = kSymBytes;
     static constexpr size_t kSerializedPolynomialByteLength = N / 2 * 3;
@@ -55,14 +51,14 @@ class KyberConstants
     KyberConstants(const KyberMode mode)
     {
         m_90s = true;
-        m_xof_block_bytes = 64; // AES-256 block size
+        m_xof_bytes = 536;
 
         switch (mode)
         {
         case KyberMode::Kyber512:
             m_90s = false;
-            m_xof_block_bytes = kShake128Rate;
-            // fall through
+            m_xof_bytes = 1816;
+            [[falltrough]]
         case KyberMode::Kyber512_90s:
             m_nist_strength = 128; // NIST Strength 1 - AES-128
             m_k = 2;
@@ -71,8 +67,8 @@ class KyberConstants
 
         case KyberMode::Kyber768:
             m_90s = false;
-            m_xof_block_bytes = kShake128Rate;
-            // fall through
+            m_xof_bytes = 1816;
+            [[falltrough]]
         case KyberMode::Kyber768_90s:
             m_nist_strength = 192; // NIST Strength 3 - AES-192
             m_k = 3;
@@ -81,8 +77,8 @@ class KyberConstants
 
         case KyberMode::Kyber1024:
             m_90s = false;
-            m_xof_block_bytes = kShake128Rate;
-            // fall through
+            m_xof_bytes = 1816;
+            [[falltrough]]
         case KyberMode::Kyber1024_90s:
             m_nist_strength = 256; // NIST Strength 5 - AES-256
             m_k = 4;
@@ -96,9 +92,9 @@ class KyberConstants
         return m_k;
     }
 
-    size_t xof_block_bytes() const
+    size_t xof_bytes() const
     {
-        return m_xof_block_bytes;
+        return m_xof_bytes;
     }
 
     size_t estimated_strength() const
@@ -153,7 +149,7 @@ class KyberConstants
 
   private:
     size_t m_k;
-    size_t m_xof_block_bytes;
+    size_t m_xof_bytes;
     size_t m_nist_strength;
     size_t m_eta1;
     size_t m_eta2 = 2;
@@ -256,37 +252,25 @@ int16_t barrett_reduce(int16_t a)
 template <typename Alloc>
 secure_vector<uint8_t> prf(const std::vector<uint8_t, Alloc> &seed, const uint8_t nonce, const KyberConstants &mode, const size_t outlen)
 {
-    secure_vector<uint8_t> out(outlen, 0);
-
     if (!mode.is_90s())
     {
-        // only normal kyber no 90s
-        std::vector<uint8_t> extkey;
-        extkey.reserve(seed.size() + 1);
-        extkey.insert(extkey.end(), seed.begin(), seed.end());
-        extkey.push_back(nonce);
-
-        secure_vector<uint64_t> sponge_state(25);
-        size_t sponge_state_pos =
-            Botan::SHA_3::absorb(KyberConstants::kShake256Rate, sponge_state, 0, extkey.data(), extkey.size());
-
-        Botan::SHA_3::finish(KyberConstants::kShake256Rate, sponge_state, sponge_state_pos, 0x1F, 0x80);
-        Botan::SHA_3::expand(KyberConstants::kShake256Rate, sponge_state, out.data(), out.size());
-    }
-    else
-    {
-        // 90s mode
+        SHAKE_256 kdf(outlen * 8);
+        kdf.update(seed);
+        kdf.update(nonce);
+        return kdf.final();
+    } else {
         std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create_or_throw( "CTR-BE(AES-256)" ) );
         cipher->set_key( seed );
-        // IV is zero padded to block length internally
-        uint8_t iv[12] = { 0 };
+
+        std::vector<uint8_t> iv(12);
         iv[0] = nonce;
-        cipher->set_iv( iv, 12 );
+        cipher->set_iv(iv.data(), iv.size());
 
+        secure_vector<uint8_t> out(outlen);
         cipher->encrypt( out );
-    }
 
-    return out;
+        return out;
+    }
 }
 
 class Polynomial
@@ -651,22 +635,22 @@ class Polynomial
      *
      * Returns number of sampled 16-bit integers (at most len)
      **************************************************/
-    static Polynomial sample_rej_uniform(size_t &out_count, std::vector<uint8_t> buf)
+    static Polynomial sample_rej_uniform(std::vector<uint8_t> buf)
     {
         Polynomial p;
-        out_count = 0;
 
+        size_t count = 0;
         size_t pos = 0;
-        while (out_count < p.coeffs.size() && pos + 3 <= buf.size())
+        while (count < p.coeffs.size() && pos + 3 <= buf.size())
         {
             size_t val0 = ((buf[pos + 0] >> 0) | ((uint16_t)buf[pos + 1] << 8)) & 0xFFF;
             size_t val1 = ((buf[pos + 1] >> 4) | ((uint16_t)buf[pos + 2] << 4)) & 0xFFF;
             pos += 3;
 
             if (val0 < KyberConstants::Q)
-                p.coeffs[out_count++] = val0;
-            if (out_count < p.coeffs.size() && val1 < KyberConstants::Q)
-                p.coeffs[out_count++] = val1;
+                p.coeffs[count++] = val0;
+            if (count < p.coeffs.size() && val1 < KyberConstants::Q)
+                p.coeffs[count++] = val1;
         }
 
         return p;
@@ -981,78 +965,26 @@ class PolynomialMatrix
 
         PolynomialMatrix matrix(mode);
 
+        SHAKE_128 hash(mode.xof_bytes() * 8);
+
         for (size_t i = 0; i < mode.k(); ++i)
         {
             for (size_t j = 0; j < mode.k(); ++j)
             {
-                secure_vector<uint64_t> sponge_state(25);
-
-                secure_vector<uint8_t> extseed1;
-                extseed1.reserve(seed.size() + 2);
-                extseed1.insert(extseed1.end(), seed.cbegin(), seed.cend());
+                hash.update(seed);
 
                 if (transposed)
                 {
-                    extseed1.push_back(i);
-                    extseed1.push_back(j);
+                    hash.update(i);
+                    hash.update(j);
                 }
                 else
                 {
-                    extseed1.push_back(j);
-                    extseed1.push_back(i);
+                    hash.update(j);
+                    hash.update(i);
                 }
 
-                size_t sponge_state_pos = Botan::SHA_3::absorb(KyberConstants::kShake128Rate, sponge_state, 0,
-                                                               extseed1.data(), extseed1.size());
-
-                // TODO: move to KyberConstants
-                const size_t matrix_length =
-                    12 * KyberConstants::N / 8 * (1 << 12) / KyberConstants::Q + mode.xof_block_bytes();
-
-                // 2 extra bytes to buf_std for the expansion in the while loop  --
-                // or not??
-                std::vector<uint8_t> buf(matrix_length); // + 2 );
-                Botan::SHA_3::finish(KyberConstants::kShake128Rate, sponge_state, sponge_state_pos, 0x1F, 0x80);
-                Botan::SHA_3::expand(KyberConstants::kShake128Rate, sponge_state, buf.data(), matrix_length);
-
-                size_t unused;
-                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(unused, buf);
-
-                //                  TODO: This while loop is never run and all
-                //                  tests are passing without it.
-                //                        It seems it would be called if
-                //                        rej_uniform exits via the second
-                //                        condition -- `pos + 3 <= buflen`. But I
-                //                        don't know if this is something that can
-                //                        happen. Can this be removed?
-                // Michael Boric: very strange, that the tests pass without it! I can't find this while loop
-                //                in the spec, but it's definetly in the reference implementation. We should
-                //                double check this!
-                //
-                //                     ctr = rej_uniform(
-                //                     a[i].vec[j].coeffs.data(), N,
-                //                     buf_std.data(), matrix_length ); while ( ctr
-                //                     < N ) {
-                //                         const size_t off = matrix_length % 3;
-                //                         for ( k = 0; k < off; k++ )
-                //                             buf_std[k] = buf_std[matrix_length -
-                //                             off
-                //                             + k];
-
-                //                         Botan::SHA_3::permute(
-                //                         spongeState.data() );
-                //                         Botan::SHA_3::expand(
-                //                         KyberConstants::kShake128Rate,
-                //                         spongeState, buf_std.data() + off, 168
-                //                         );
-
-                //                         matrix_length = off +
-                //                         mode.xof_block_bytes(); std::cout <<
-                //                         "mat len now: " << matrix_length
-                //                         << std::endl; ctr += rej_uniform(
-                //                         a[i].vec[j].coeffs.data() + ctr, N -
-                //                         ctr, buf_std.data(), matrix_length );
-                //                     }
+                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(hash.final_stdvec());
             }
         }
 
@@ -1090,18 +1022,13 @@ class PolynomialMatrix
                 // IV is zero padded to block length internally
                 cipher->set_iv( iv, 12 );
 
-                // TODO: move to KyberConstants
-                const size_t matrix_length =
-                    12 * KyberConstants::N / 8 * ( 1 << 12 ) / KyberConstants::Q + mode.xof_block_bytes();
-
                 // 2 extra bytes to buf_std for the expansion in the while loop  --
                 // or not??
-                std::vector<uint8_t> buf( matrix_length ); // + 2 );
+                std::vector<uint8_t> buf( mode.xof_bytes() ); // + 2 );
 
-                cipher->cipher1( buf.data(), matrix_length );
+                cipher->cipher1( buf.data(), mode.xof_bytes() );
 
-                size_t unused;
-                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform( unused, buf );
+                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(buf);
 
                 // See comment "TODO: This while loop is never run" from generate_normal
             }
