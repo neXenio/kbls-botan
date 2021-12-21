@@ -1,12 +1,13 @@
 #include <botan/hash.h>
 #include <botan/kyber.h>
-#include <botan/loadstor.h>
 #include <botan/mem_ops.h>
 #include <botan/pubkey.h>
 #include <botan/rng.h>
-#include <botan/sha3.h>
-#include <botan/shake.h>
 #include <botan/stream_cipher.h>
+
+#include <botan/internal/sha3.h>
+#include <botan/internal/shake.h>
+#include <botan/internal/loadstor.h>
 
 #include <array>
 
@@ -147,7 +148,7 @@ class KyberConstants
 
     std::unique_ptr<HashFunction> KDF() const
     {
-        return ( is_90s() ) ? HashFunction::create_or_throw( "SHA-256" ) : HashFunction::create_or_throw( "SHAKE-256" );
+        return ( is_90s() ) ? HashFunction::create_or_throw( "SHA-256" ) : HashFunction::create_or_throw( "SHAKE-256(256)" );
     }
 
   private:
@@ -1680,6 +1681,10 @@ Kyber_PublicKey::Kyber_PublicKey(const std::vector<uint8_t> &pub_key, KyberMode 
     m_public = std::make_shared<Kyber_PublicKeyInternal>(std::move(mode), std::move(poly_vec), std::move(seed));
 }
 
+Kyber_PublicKey::Kyber_PublicKey(const Kyber_PublicKey & other)
+    : m_public(std::make_shared<Kyber_PublicKeyInternal>(*other.m_public))
+{}
+
 std::vector<uint8_t> Kyber_PublicKey::public_key_bits() const
 {
     auto pub_key = m_public->polynomials().tobytes<std::vector<uint8_t>>();
@@ -1763,6 +1768,11 @@ Kyber_PrivateKey::Kyber_PrivateKey(secure_vector<uint8_t> sk, std::vector<uint8_
 
     m_private = std::make_shared<Kyber_PrivateKeyInternal>(std::move(mode), PolynomialVector::frombytes(skpv, mode),
                                                            std::move(z));
+}
+
+std::unique_ptr<Public_Key> Kyber_PrivateKey::public_key() const
+{
+    return std::make_unique<Kyber_PublicKey>(*this);
 }
 
 secure_vector<uint8_t> Kyber_PrivateKey::private_key_bits() const
