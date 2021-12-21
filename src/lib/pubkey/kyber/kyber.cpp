@@ -110,6 +110,11 @@ class KyberConstants
         return m_eta1;
     }
 
+    size_t eta2() const
+    {
+        return m_eta2;
+    }
+
     bool is_90s() const
     {
         return m_90s;
@@ -140,11 +145,17 @@ class KyberConstants
         return (is_90s()) ? HashFunction::create("SHA-512") : HashFunction::create("SHA-3(512)");
     }
 
+    std::unique_ptr<HashFunction> KDF() const
+    {
+        return ( is_90s() ) ? HashFunction::create( "SHA-256" ) : HashFunction::create( "SHAKE-256" );
+    }
+
   private:
     size_t m_k;
     size_t m_xof_block_bytes;
     size_t m_nist_strength;
     size_t m_eta1;
+    size_t m_eta2 = 2;
     bool m_90s;
 };
 
@@ -242,9 +253,9 @@ int16_t barrett_reduce(int16_t a)
  * Return:       Output
  **************************************************/
 template <typename Alloc>
-secure_vector<uint8_t> prf(const std::vector<uint8_t, Alloc> &seed, const uint8_t nonce, const KyberConstants &mode)
+secure_vector<uint8_t> prf(const std::vector<uint8_t, Alloc> &seed, const uint8_t nonce, const KyberConstants &mode, const size_t outlen)
 {
-    secure_vector<uint8_t> out;
+    secure_vector<uint8_t> out(outlen, 0);
 
     if (!mode.is_90s())
     {
@@ -258,29 +269,20 @@ secure_vector<uint8_t> prf(const std::vector<uint8_t, Alloc> &seed, const uint8_
         size_t sponge_state_pos =
             Botan::SHA_3::absorb(KyberConstants::kShake256Rate, sponge_state, 0, extkey.data(), extkey.size());
 
-        // normal kyber not 90s
-        out.resize(mode.eta1() * KyberConstants::N / 4);
         Botan::SHA_3::finish(KyberConstants::kShake256Rate, sponge_state, sponge_state_pos, 0x1F, 0x80);
         Botan::SHA_3::expand(KyberConstants::kShake256Rate, sponge_state, out.data(), out.size());
     }
     else
     {
-        throw Botan::Not_Implemented("90s mode is commented out for the time being");
-
         // 90s mode
-        // std::vector<uint8_t> buffer(12, 0);
-        // buffer.at(0) = nonce;
-        // uint8_t iv[1] = { 0 };
+        std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+        cipher->set_key( seed );
+        // IV is zero padded to block length internally
+        uint8_t iv[12] = { 0 };
+        iv[0] = nonce;
+        cipher->set_iv( iv, 12 );
 
-        // std::unique_ptr<Botan::StreamCipher> cipher(
-        // Botan::StreamCipher::create( "CTR-BE(AES-256)" ) ); cipher->set_key(
-        // key, 32 );
-        // // IV is zero padded to block length internally
-        // cipher->set_iv( iv, 1 );
-
-        // cipher->encrypt( buffer );
-
-        // return {};
+        cipher->encrypt( out );
     }
 
     return out;
@@ -447,7 +449,7 @@ class Polynomial
     template <typename Alloc>
     static Polynomial getnoise_eta2(const std::vector<uint8_t, Alloc> &seed, uint8_t nonce, const KyberConstants &mode)
     {
-        const auto buf = prf(seed, nonce, mode);
+        const auto buf = prf(seed, nonce, mode, mode.eta2() * KyberConstants::N / 4 );
         return Polynomial::cbd2(buf);
     }
 
@@ -466,7 +468,7 @@ class Polynomial
     template <typename Alloc>
     static Polynomial getnoise_eta1(const std::vector<uint8_t, Alloc> &seed, uint8_t nonce, const KyberConstants &mode)
     {
-        auto buf = prf(seed, nonce, mode);
+        auto buf = prf(seed, nonce, mode, mode.eta1() * KyberConstants::N / 4 );
 
         if (mode.eta1() == 2)
         {
@@ -1002,6 +1004,7 @@ class PolynomialMatrix
                 size_t sponge_state_pos = Botan::SHA_3::absorb(KyberConstants::kShake128Rate, sponge_state, 0,
                                                                extseed1.data(), extseed1.size());
 
+                // TODO: move to KyberConstants
                 const size_t matrix_length =
                     12 * KyberConstants::N / 8 * (1 << 12) / KyberConstants::Q + mode.xof_block_bytes();
 
@@ -1021,6 +1024,9 @@ class PolynomialMatrix
                 //                        condition -- `pos + 3 <= buflen`. But I
                 //                        don't know if this is something that can
                 //                        happen. Can this be removed?
+                // Michael Boric: very strange, that the tests pass without it! I can't find this while loop
+                //                in the spec, but it's definetly in the reference implementation. We should
+                //                double check this!
                 //
                 //                     ctr = rej_uniform(
                 //                     a[i].vec[j].coeffs.data(), N,
@@ -1053,73 +1059,54 @@ class PolynomialMatrix
     }
 
     // 90s mode
-    // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is
-    // used as the key and i||j is zeropadded to a 12 - byte nonce. The counter
-    // of CTR mode is initialized to zero.
+    // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
+    // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
     static PolynomialMatrix generate_90s(const std::vector<uint8_t> &seed, const bool transposed,
                                          const KyberConstants &mode)
     {
-        BOTAN_UNUSED(seed, transposed, mode);
-        throw Botan::Not_Implemented("90s is commented for now");
-        // std::vector<PolynomialVector> a(m_k, PolynomialVector(m_k));
+        BOTAN_ASSERT( seed.size() == KyberConstants::kSymBytes, "unexpected seed size" );
 
-        // unsigned int ctr, i, j, k;
-        // unsigned int buflen, off;
+        PolynomialMatrix matrix( mode );
 
-        // for ( i = 0; i < m_k; i++ ) {
-        //    for ( j = 0; j < m_k; j++ ) {
-        //        std::vector<uint8_t> buffer( 12, 0 );
-        //        if ( transposed )
-        //        {
-        //            buffer.at( 0 ) = i;
-        //            buffer.at( 1 ) = j;
-        //        }
-        //        else
-        //        {
-        //            buffer.at( 0 ) = j;
-        //            buffer.at( 1 ) = i;
-        //        }
+        for ( size_t i = 0; i < mode.k(); ++i )
+        {
+            for ( size_t j = 0; j < mode.k(); ++j )
+            {
+                uint8_t iv[12] = { 0 };
+                if ( transposed )
+                {
+                    iv[0] = i;
+                    iv[1] = j;
+                }
+                else
+                {
+                    iv[0] = j;
+                    iv[1] = i;
+                }
 
-        //        // absorb
-        //        std::unique_ptr<Botan::StreamCipher> cipher(
-        //        Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
-        //        cipher->set_key( seed );
-        //        // IV is zero padded to block length internally
-        //        uint8_t iv[1] = { 0 };
-        //        cipher->set_iv( iv, 1 );
+                std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+                cipher->set_key( seed.data(), 32 );
+                // IV is zero padded to block length internally
+                cipher->set_iv( iv, 12 );
 
-        //        // is this still squeeze or already the first absorb?
-        //        cipher->encrypt( buffer );
+                // TODO: move to KyberConstants
+                const size_t matrix_length =
+                    12 * KyberConstants::N / 8 * ( 1 << 12 ) / KyberConstants::Q + mode.xof_block_bytes();
 
-        //        buflen = m_gen_matrix_nblocks * m_XOF_BLOCKBYTES;
-        //        // 2 extra bytes to buf_std for the expansion in the while loop
-        //        std::vector <uint8_t> buf_std( buflen + 2 );
-        //        //Botan::SHA_3::finish( m_SHAKE128_RATE, spongeState,
-        //        spongeStatePos, 0x1F, 0x80 );
-        //        //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState,
-        //        buf_std.data(), buflen );
+                // 2 extra bytes to buf_std for the expansion in the while loop  --
+                // or not??
+                std::vector<uint8_t> buf( matrix_length ); // + 2 );
 
-        //        ctr = rej_uniform( a[i].vec[j].coeffs.data(), m_N,
-        //        buf_std.data(), buflen );
+                cipher->cipher1( buf.data(), matrix_length );
 
-        //        while ( ctr < m_N ) {
-        //            off = buflen % 3;
-        //            for ( k = 0; k < off; k++ )
-        //                buf_std[k] = buf_std[buflen - off + k];
+                size_t unused;
+                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform( unused, buf );
 
-        //            // normal kyber not 90s
-        //           // Botan::SHA_3::permute( spongeState.data() );
-        //            //Botan::SHA_3::expand( m_SHAKE128_RATE, spongeState,
-        //            buf_std.data() + off, 168 );
+                // See comment "TODO: This while loop is never run" from generate_normal
+            }
+        }
 
-        //            buflen = off + m_XOF_BLOCKBYTES;
-        //            ctr += rej_uniform( a[i].vec[j].coeffs.data() + ctr, m_N -
-        //            ctr, buf_std.data(), buflen );
-        //        }
-        //    }
-        //}
-
-        // return a;
+        return matrix;
     }
 };
 
@@ -1549,11 +1536,15 @@ class Kyber_KEM_Encryptor final : public PK_Ops::KEM_Encryption, protected Kyber
         // naming from kyber spec
         auto H = m_mode.H();
         auto G = m_mode.G();
-        auto KDF = HashFunction::create("SHAKE-256");
+        auto KDF = m_mode.KDF();
 
         // TODO: do we actually need to hash this?
         // input is 32 bytes from RNG, output is... well 32 bytes from PRF?
         // KAT tests need it obviously, but does the algorithm depend on it?
+        // Michael Boric: That's how I understand the spec:
+        // 1: m <- B^32
+        // 2: m <- H( m )
+        // see Kyber:CCAKEM:Enc(pk) in spec
         H->update(rng.random_vec(KyberConstants::kSymBytes));
         const auto shared_secret = H->final();
 
@@ -1592,7 +1583,7 @@ class Kyber_KEM_Decryptor final : public PK_Ops::KEM_Decryption, protected Kyber
         // naming from kyber spec
         auto H = m_mode.H();
         auto G = m_mode.G();
-        auto KDF = HashFunction::create("SHAKE-256");
+        auto KDF = m_mode.KDF();
 
         const auto shared_secret = indcpa_dec(encap_key, len_encap_key);
 
@@ -1720,12 +1711,18 @@ Kyber_PrivateKey::Kyber_PrivateKey(RandomNumberGenerator &rng, KyberMode m)
 {
     KyberConstants mode(m);
 
-    // TODO: do we actually need to hash the random output?
-    // TODO: should this hash be different for 90s?
-    auto h = HashFunction::create("SHA-3(512)");
-    auto seed = h->process(rng.random_vec(KyberConstants::kSymBytes));
+    // TODO: 1. Do we actually need to hash the random output?
+    // TODO: 2. Should this hash be different for 90s?
+    // Michael Boric:
+    // 1. That's weird, the spec and the reference implementation don't match here. The spec 
+    //    (see Kyber.CCAKEM.KeyGen()) doesn't mention a hash here, but the reference implementation 
+    //    uses hash_g() (see indcpa_keypair() ).
+    // 2. Yes. hash_g is SHA-512 for 90s mode, SHA-3(512) for normal mode
+    auto G = mode.G();
 
-    const auto middle = h->output_length() / 2;
+    auto seed = G->process(rng.random_vec(KyberConstants::kSymBytes));
+
+    const auto middle = G->output_length() / 2;
     std::vector<uint8_t> seed1(seed.begin(), seed.begin() + middle);
     secure_vector<uint8_t> seed2(seed.begin() + middle, seed.end());
 
@@ -1770,9 +1767,11 @@ secure_vector<uint8_t> Kyber_PrivateKey::private_key_bits() const
     const auto &z = m_private->z();
 
     auto pk = public_key_bits();
-    std::unique_ptr<HashFunction> h(HashFunction::create("SHA-3(256)")); // TODO: should this be different for 90s?
-    h->update(pk);
-    const auto pk_hash = h->final_stdvec();
+    // TODO: should this be different for 90s?
+    // Michael Boric: Yes, fixed.
+    auto H = m_private->mode().H();
+    H->update(pk);
+    const auto pk_hash = H->final_stdvec();
 
     auto sk = m_private->polynomials().tobytes<secure_vector<uint8_t>>();
     sk.insert(sk.end(), pk.begin(), pk.end());
