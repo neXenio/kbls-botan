@@ -6,6 +6,7 @@
 #include <botan/stream_cipher.h>
 
 #include <botan/internal/shake.h>
+#include <botan/internal/shake_cipher.h>
 #include <botan/internal/loadstor.h>
 
 #include <array>
@@ -51,13 +52,11 @@ class KyberConstants
     KyberConstants(const KyberMode mode)
     {
         m_90s = true;
-        m_xof_bytes = 536;
 
         switch (mode)
         {
         case KyberMode::Kyber512:
             m_90s = false;
-            m_xof_bytes = 1816;
             [[falltrough]]
         case KyberMode::Kyber512_90s:
             m_nist_strength = 128; // NIST Strength 1 - AES-128
@@ -67,7 +66,6 @@ class KyberConstants
 
         case KyberMode::Kyber768:
             m_90s = false;
-            m_xof_bytes = 1816;
             [[falltrough]]
         case KyberMode::Kyber768_90s:
             m_nist_strength = 192; // NIST Strength 3 - AES-192
@@ -77,7 +75,6 @@ class KyberConstants
 
         case KyberMode::Kyber1024:
             m_90s = false;
-            m_xof_bytes = 1816;
             [[falltrough]]
         case KyberMode::Kyber1024_90s:
             m_nist_strength = 256; // NIST Strength 5 - AES-256
@@ -90,11 +87,6 @@ class KyberConstants
     size_t k() const
     {
         return m_k;
-    }
-
-    size_t xof_bytes() const
-    {
-        return m_xof_bytes;
     }
 
     size_t estimated_strength() const
@@ -149,7 +141,6 @@ class KyberConstants
 
   private:
     size_t m_k;
-    size_t m_xof_bytes;
     size_t m_nist_strength;
     size_t m_eta1;
     size_t m_eta2 = 2;
@@ -635,17 +626,20 @@ class Polynomial
      *
      * Returns number of sampled 16-bit integers (at most len)
      **************************************************/
-    static Polynomial sample_rej_uniform(std::vector<uint8_t> buf)
+    static Polynomial sample_rej_uniform(std::unique_ptr<StreamCipher> xof)
     {
         Polynomial p;
 
         size_t count = 0;
-        size_t pos = 0;
-        while (count < p.coeffs.size() && pos + 3 <= buf.size())
+        while (count < p.coeffs.size())
         {
-            size_t val0 = ((buf[pos + 0] >> 0) | ((uint16_t)buf[pos + 1] << 8)) & 0xFFF;
-            size_t val1 = ((buf[pos + 1] >> 4) | ((uint16_t)buf[pos + 2] << 4)) & 0xFFF;
-            pos += 3;
+            // TODO: this is called a lot and is likely a bottleneck
+            //       (cipher1() is virtual)
+            std::array<uint8_t, 3> buf{0,0,0};
+            xof->cipher1(buf.data(), buf.size());
+
+            size_t val0 = ((buf[0] >> 0) | ((uint16_t)buf[1] << 8)) & 0xFFF;
+            size_t val1 = ((buf[1] >> 4) | ((uint16_t)buf[2] << 4)) & 0xFFF;
 
             if (val0 < KyberConstants::Q)
                 p.coeffs[count++] = val0;
@@ -956,8 +950,6 @@ class PolynomialMatrix
     {
     }
 
-    // normal mode, not 90s
-    // We instantiate XOF with SHAKE-128
     static PolynomialMatrix generate_normal(const std::vector<uint8_t> &seed, const bool transposed,
                                             const KyberConstants &mode)
     {
@@ -965,47 +957,44 @@ class PolynomialMatrix
 
         PolynomialMatrix matrix(mode);
 
-        SHAKE_128 hash(mode.xof_bytes() * 8);
-
         for (size_t i = 0; i < mode.k(); ++i)
         {
             for (size_t j = 0; j < mode.k(); ++j)
             {
-                hash.update(seed);
+                std::vector<uint8_t> key = seed;
 
                 if (transposed)
                 {
-                    hash.update(i);
-                    hash.update(j);
+                    key.push_back(i);
+                    key.push_back(j);
                 }
                 else
                 {
-                    hash.update(j);
-                    hash.update(i);
+                    key.push_back(j);
+                    key.push_back(i);
                 }
 
-                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(hash.final_stdvec());
+                auto cipher = std::make_unique<SHAKE_128_Cipher>();
+                cipher->set_key(key);
+                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(std::move(cipher));
             }
         }
 
         return matrix;
     }
 
-    // 90s mode
-    // We instantiate XOF(seed, i, j) with AES-256 in CTR mode, where seed is used as the key and i||j is zeropadded
-    // to a 12 - byte nonce. The counter of CTR mode is initialized to zero.
     static PolynomialMatrix generate_90s(const std::vector<uint8_t> &seed, const bool transposed,
                                          const KyberConstants &mode)
     {
         BOTAN_ASSERT( seed.size() == KyberConstants::kSymBytes, "unexpected seed size" );
 
-        PolynomialMatrix matrix( mode );
+        PolynomialMatrix matrix(mode);
 
         for ( size_t i = 0; i < mode.k(); ++i )
         {
             for ( size_t j = 0; j < mode.k(); ++j )
             {
-                uint8_t iv[12] = { 0 };
+                std::array<uint8_t, 12> iv = {0};
                 if ( transposed )
                 {
                     iv[0] = i;
@@ -1017,20 +1006,10 @@ class PolynomialMatrix
                     iv[1] = i;
                 }
 
-                std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create_or_throw( "CTR-BE(AES-256)" ) );
-                cipher->set_key( seed.data(), 32 );
-                // IV is zero padded to block length internally
-                cipher->set_iv( iv, 12 );
-
-                // 2 extra bytes to buf_std for the expansion in the while loop  --
-                // or not??
-                std::vector<uint8_t> buf( mode.xof_bytes() ); // + 2 );
-
-                cipher->cipher1( buf.data(), mode.xof_bytes() );
-
-                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(buf);
-
-                // See comment "TODO: This while loop is never run" from generate_normal
+                auto cipher( Botan::StreamCipher::create_or_throw( "CTR-BE(AES-256)" ) );
+                cipher->set_key(seed);
+                cipher->set_iv(iv.data(), iv.size());
+                matrix.mat[i].vec[j] = Polynomial::sample_rej_uniform(std::move(cipher));
             }
         }
 
@@ -1649,8 +1628,8 @@ Kyber_PrivateKey::Kyber_PrivateKey(RandomNumberGenerator &rng, KyberMode m)
     // TODO: 1. Do we actually need to hash the random output?
     // TODO: 2. Should this hash be different for 90s?
     // Michael Boric:
-    // 1. That's weird, the spec and the reference implementation don't match here. The spec 
-    //    (see Kyber.CCAKEM.KeyGen()) doesn't mention a hash here, but the reference implementation 
+    // 1. That's weird, the spec and the reference implementation don't match here. The spec
+    //    (see Kyber.CCAKEM.KeyGen()) doesn't mention a hash here, but the reference implementation
     //    uses hash_g() (see indcpa_keypair() ).
     // 2. Yes. hash_g is SHA-512 for 90s mode, SHA-3(512) for normal mode
     auto G = mode.G();
