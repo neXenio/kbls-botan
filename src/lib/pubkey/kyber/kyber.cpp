@@ -1602,16 +1602,19 @@ class Kyber_KEM_Decryptor final : public PK_Ops::KEM_Decryption, protected Kyber
         const auto cmp = indcpa_enc(shared_secret, upper_g_out, m_key.m_public);
         BOTAN_ASSERT(len_encap_key == cmp.size(), "output of indcpa_enc has unexpected length");
 
+        // Overwrite pre-k with z on re-encryption failure (constant time)
+        secure_vector<uint8_t> lower_g_out_final;
         if (constant_time_compare(encap_key, cmp.data(), len_encap_key))
         {
-            KDF->update(lower_g_out);
-            KDF->update(H->final());
+            std::copy( lower_g_out.begin(), lower_g_out.end(), std::back_inserter( lower_g_out_final ) );
         }
         else
         {
-            // TODO: do we need to finalize this hash?
-            H->update(m_key.m_private->z());
+            std::copy( m_key.m_private->z().begin(), m_key.m_private->z().end(), std::back_inserter( lower_g_out_final ) );
         }
+
+        KDF->update( lower_g_out );
+        KDF->update( H->final() );
 
         return KDF->final();
     }
