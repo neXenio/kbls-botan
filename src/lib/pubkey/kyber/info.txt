@@ -7,8 +7,8 @@ aes
 rng
 sha2_32
 sha2_64
-sha3
 shake
+shake_cipher
 stream
 ctr
 </requires>

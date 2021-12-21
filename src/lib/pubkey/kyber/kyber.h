@@ -29,7 +29,7 @@ namespace Botan {
 
         Kyber_PublicKey( const std::vector<uint8_t>&pub_key, KyberMode mode );
 
-        Kyber_PublicKey(const Kyber_PublicKey & other) = default;
+        Kyber_PublicKey(const Kyber_PublicKey & other);
 
         Kyber_PublicKey& operator=(const Kyber_PublicKey & other) = default;
 
@@ -73,6 +73,8 @@ namespace Botan {
             Kyber_PrivateKey(secure_vector<uint8_t> sk, std::vector<uint8_t> pk, KyberMode mode);
 
             bool check_key( RandomNumberGenerator& rng, bool strong ) const override;
+
+            std::unique_ptr<Public_Key> public_key() const override;
 
             secure_vector<uint8_t> private_key_bits() const override;
 
