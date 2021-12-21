@@ -137,17 +137,17 @@ class KyberConstants
 
     std::unique_ptr<HashFunction> H() const
     { // TODO: out of band?
-        return (is_90s()) ? HashFunction::create("SHA-256") : HashFunction::create("SHA-3(256)");
+        return (is_90s()) ? HashFunction::create_or_throw("SHA-256") : HashFunction::create_or_throw("SHA-3(256)");
     }
 
     std::unique_ptr<HashFunction> G() const
     {
-        return (is_90s()) ? HashFunction::create("SHA-512") : HashFunction::create("SHA-3(512)");
+        return (is_90s()) ? HashFunction::create_or_throw("SHA-512") : HashFunction::create_or_throw("SHA-3(512)");
     }
 
     std::unique_ptr<HashFunction> KDF() const
     {
-        return ( is_90s() ) ? HashFunction::create( "SHA-256" ) : HashFunction::create( "SHAKE-256" );
+        return ( is_90s() ) ? HashFunction::create_or_throw( "SHA-256" ) : HashFunction::create_or_throw( "SHAKE-256" );
     }
 
   private:
@@ -275,7 +275,7 @@ secure_vector<uint8_t> prf(const std::vector<uint8_t, Alloc> &seed, const uint8_
     else
     {
         // 90s mode
-        std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+        std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create_or_throw( "CTR-BE(AES-256)" ) );
         cipher->set_key( seed );
         // IV is zero padded to block length internally
         uint8_t iv[12] = { 0 };
@@ -1084,7 +1084,7 @@ class PolynomialMatrix
                     iv[1] = i;
                 }
 
-                std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create( "CTR-BE(AES-256)" ) );
+                std::unique_ptr<Botan::StreamCipher> cipher( Botan::StreamCipher::create_or_throw( "CTR-BE(AES-256)" ) );
                 cipher->set_key( seed.data(), 32 );
                 // IV is zero padded to block length internally
                 cipher->set_iv( iv, 12 );
